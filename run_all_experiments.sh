@@ -6,14 +6,15 @@
 # 1. Adapt-exp configs (train_simple.py, --extra_config):
 #    bash run_all_experiments.sh --exp_dir config/adapt_exp [--configs "test_01 test_02"]
 #
-# 2. Standard model configs (train.py, --data / --config):
-#    bash run_all_experiments.sh --data WIKI [--models "TGAT TGN APAN"] [-- extra args]
+# 2. Dataset + model (train_simple.py, looks up config/adapt_exp/<DATA>/<MODEL>.yml):
+#    bash run_all_experiments.sh --data WIKI [--models "TGAT TGN APAN"]
 #
 # Examples:
+#   bash run_all_experiments.sh --data WIKI
+#   bash run_all_experiments.sh --data WIKI --models "TGAT TGN"
+#   bash run_all_experiments.sh --data REDDIT --models "TGAT TGN APAN"
 #   bash run_all_experiments.sh --exp_dir config/adapt_exp
 #   bash run_all_experiments.sh --exp_dir config/adapt_exp --configs "test_01 test_02"
-#   bash run_all_experiments.sh --data WIKI
-#   bash run_all_experiments.sh --data WIKI --models "TGN TGAT"
 
 set -e
 
@@ -86,26 +87,24 @@ if [ -n "$EXP_DIR" ]; then
     done
 
 # ---------------------------------------------------------------------------
-# Mode 2: standard model configs via train.py
+# Mode 2: dataset + model — looks up config/adapt_exp/<DATA>/<MODEL>.yml
 # ---------------------------------------------------------------------------
 elif [ -n "$DATA" ]; then
-    echo "Mode    : standard (train.py)"
+    echo "Mode    : adapt-exp by dataset (train_simple.py)"
     echo "Dataset : $DATA"
     echo "Models  : $MODELS"
-    echo "Extra   : ${EXTRA_ARGS[*]}"
     echo "========================================"
 
     for MODEL in $MODELS; do
-        CONFIG="$REPO_DIR/config/${MODEL}.yml"
-        if [ ! -f "$CONFIG" ]; then
-            echo "WARNING: config not found for $MODEL ($CONFIG) — skipping."
+        CFG="$REPO_DIR/config/adapt_exp/$DATA/${MODEL}.yml"
+        if [ ! -f "$CFG" ]; then
+            echo "WARNING: config not found for $MODEL on $DATA ($CFG) — skipping."
             continue
         fi
         echo ""
         echo ">>> Running $MODEL on $DATA..."
         echo "----------------------------------------"
-        if bash "$REPO_DIR/collect_results.sh" \
-                --data "$DATA" --config "$CONFIG" "${EXTRA_ARGS[@]}"; then
+        if bash "$REPO_DIR/collect_results.sh" --extra_config "$CFG" "${EXTRA_ARGS[@]}"; then
             echo "<<< $MODEL on $DATA: DONE"
         else
             echo "<<< $MODEL on $DATA: FAILED (exit $?)"
@@ -114,11 +113,11 @@ elif [ -n "$DATA" ]; then
     done
 
 else
-    echo "ERROR: provide either --exp_dir or --data."
+    echo "ERROR: provide either --data or --exp_dir."
     echo ""
     echo "Usage:"
+    echo "  bash run_all_experiments.sh --data WIKI [--models \"TGAT TGN APAN\"]"
     echo "  bash run_all_experiments.sh --exp_dir config/adapt_exp [--configs \"test_01 test_02\"]"
-    echo "  bash run_all_experiments.sh --data WIKI [--models \"TGAT TGN APAN\"] [-- extra args]"
     exit 1
 fi
 

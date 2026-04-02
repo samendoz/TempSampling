@@ -66,3 +66,33 @@ you can run one time
 then customize the script in it then run
 
 > ./run.sh
+
+## Result Collection
+
+### Single run with logging
+
+Wraps `train.py` or `train_simple.py` with the same arguments. Zero training overhead — uses `tee` to capture stdout/stderr while training runs, then parses the log into a `.log` and `.csv` file under `results/`.
+
+```bash
+# adapt-exp style (train_simple.py)
+bash collect_results.sh --extra_config config/adapt_exp/test_01.yml
+
+# standard style (train.py)
+bash collect_results.sh --data WIKI --config config/TGN.yml
+```
+
+### Batch runs
+
+```bash
+# run all configs in a directory
+bash run_all_experiments.sh --exp_dir config/adapt_exp
+
+# run specific configs from a directory
+bash run_all_experiments.sh --exp_dir config/adapt_exp --configs "test_01 test_02"
+
+# run specific models on a dataset (looks up config/adapt_exp/<DATA>/<MODEL>.yml)
+bash run_all_experiments.sh --exp_dir config/adapt_exp/WIKI --configs "TGAT TGN APAN"
+
+# pass extra args to train_simple.py (after --)
+bash run_all_experiments.sh --exp_dir config/adapt_exp/WIKI --configs "TGAT TGN" -- --eval_neg_samples 10
+```
