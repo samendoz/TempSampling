@@ -242,6 +242,8 @@ check_memory_usage()
 # input("Press Enter to continue...")
 
 color_sampler = None
+num_nodes = g["indptr"].shape[0]
+num_edges = len(g["eid"])
 if args.sampler_for_each_chunk:
         sampler_dict = dict()
 if args.mode == "observing" or args.mode == "batch_stable_freezing" or args.mode == "batch_stable_freezing_large" or args.mode == "observing_large":

@@ -1,10 +1,19 @@
-python >= 3.6.13
-pytorch >= 1.8.1
-pandas >= 1.1.5
-numpy >= 1.19.5
-dgl >= 0.6.1
-pyyaml >= 5.4.1
-tqdm >= 4.61.0
-pybind11 >= 2.6.2
-g++ >= 7.5.0
-openmp >= 201511
+# Validated stack — use experimental_setup.sh for automated installation
+# Python 3.12, CUDA 12.1 (cu121)
+
+torch==2.2.0          # from https://download.pytorch.org/whl/cu121
+dgl==2.1.0+cu121      # from https://data.dgl.ai/wheels/cu121/repo.html (install --no-deps)
+numpy<2               # numpy 2.x breaks torch 2.2.0
+torch-scatter         # from https://data.pyg.org/whl/torch-2.2.0+cu121.html
+packaging
+pandas>=1.1.5
+pyyaml>=5.4.1
+tqdm>=4.61.0
+pybind11>=2.6.2
+scikit-learn
+scipy
+networkx
+requests
+psutil
+
+# System requirements: g++ >= 7.5.0, OpenMP
