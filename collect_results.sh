@@ -71,48 +71,77 @@ import sys, re, csv
 
 log_path = sys.argv[1]
 csv_path = sys.argv[2]
+flip_dist_path = csv_path.replace('.csv', '_flip_dist.csv')
 
-epoch_re   = re.compile(r'Epoch\s+(\d+):')
-metrics_re = re.compile(r'train loss:([\d.]+)\s+val ap:([\d.]+)\s+val auc:([\d.]+)')
-timing_re  = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep time:([\d.]+)s\s+model time:([\d.]+)s')
-best_re    = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
+epoch_re      = re.compile(r'Epoch\s+(\d+):')
+metrics_re    = re.compile(r'train loss:([\d.]+)\s+val ap:([\d.]+)\s+val auc:([\d.]+)')
+timing_re     = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep time:([\d.]+)s\s+model time:([\d.]+)s')
+best_re       = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
+flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]+).*?min:([\d.]+).*?max:([\d.]+).*?batches:(\d+)')
+flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
 
 rows = []
-current = {}
+flip_dist_rows = []
+current = None
+
+def flush(current, rows):
+    if current and 'train_loss' in current:
+        rows.append(current)
 
 with open(log_path) as f:
     for line in f:
         line = line.strip()
         m = epoch_re.search(line)
         if m:
+            flush(current, rows)
             current = {'epoch': m.group(1)}
             continue
         m = metrics_re.search(line)
-        if m and current:
+        if m and current is not None:
             current.update({'train_loss': m.group(1), 'val_ap': m.group(2), 'val_auc': m.group(3)})
             continue
         m = timing_re.search(line)
-        if m and current:
+        if m and current is not None:
             current.update({'time_total': m.group(1), 'time_sample': m.group(2),
                             'time_prep': m.group(3), 'time_model': m.group(4)})
-            rows.append(current)
-            current = {}
+            continue
+        m = flip_re.search(line)
+        if m and current is not None:
+            current.update({'flip_mean': m.group(1), 'flip_std': m.group(2),
+                            'flip_min': m.group(3), 'flip_max': m.group(4),
+                            'flip_batches': m.group(5)})
+            continue
+        m = flip_list_re.search(line)
+        if m and current is not None:
+            epoch = current.get('epoch', '')
+            for batch_idx, val in enumerate(m.group(1).split()):
+                flip_dist_rows.append({'epoch': epoch, 'batch': batch_idx, 'flip_ratio': val})
             continue
         m = best_re.search(line)
         if m:
             rows.append({'epoch': 'best', 'val_ap': m.group(2), 'val_auc': m.group(3),
                          'best_epoch': m.group(1)})
 
+flush(current, rows)
+
 if not rows:
     print("No metrics found in log — CSV not written.")
     sys.exit(0)
 
 fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
-              'time_total', 'time_sample', 'time_prep', 'time_model', 'best_epoch']
+              'time_total', 'time_sample', 'time_prep', 'time_model',
+              'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
+              'best_epoch']
 with open(csv_path, 'w', newline='') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
     w.writeheader()
     w.writerows(rows)
-
 print(f"Metrics saved to {csv_path} ({len(rows)} rows)")
+
+if flip_dist_rows:
+    with open(flip_dist_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=['epoch', 'batch', 'flip_ratio'])
+        w.writeheader()
+        w.writerows(flip_dist_rows)
+    print(f"Flip distribution saved to {flip_dist_path} ({len(flip_dist_rows)} rows)")
 PYEOF

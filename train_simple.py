@@ -567,6 +567,9 @@ for e in range(train_param['epoch']):
     prep_time_breakdown = {"to_dgl_blocks": 0, "mailbox_updating":0, "pack_batch":0}
     color_time_breakdown = {"forming_batch": 0, "coloring": 0, "model training": 0, "record memory": 0, "others": 0}
     batching_time_breakdown = {"sampling":0, "updating_indptr":0, "updating_stable_flag":0, "others":0}
+    #Variables to determine the stable flag ratio
+    flip_ratio_log = []
+    prev_stable_flag = None
 
 
     ########################################
@@ -780,12 +783,16 @@ for e in range(train_param['epoch']):
                 prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
                 t_prep_mailbox_s = time.time()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
-                mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid, 
-                                                           model.memory_updater.last_updated_memory, 
-                                                           root_nodes, 
-                                                           model.memory_updater.last_updated_ts, 
+                mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
+                                                           model.memory_updater.last_updated_memory,
+                                                           root_nodes,
+                                                           model.memory_updater.last_updated_ts,
                                                            threshold=SIM_THRESHOLD, any=SIM_ANY)
                 stable_flag = mailbox.get_full_node_stable_flag()
+                if prev_stable_flag is not None:
+                    flips = (stable_flag != prev_stable_flag).sum().item()
+                    flip_ratio_log.append(flips / stable_flag.shape[0])
+                prev_stable_flag = stable_flag.clone()
                 prep_time_breakdown["mailbox_updating"] += time.time() - t_prep_mailbox_s
 
                 t_forming_batch_s = time.time()
@@ -1166,12 +1173,16 @@ for e in range(train_param['epoch']):
                     prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
                     t_prep_mailbox_s = time.time()
                     mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
-                    mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid, 
-                                                            model.memory_updater.last_updated_memory, 
-                                                            root_nodes, 
-                                                            model.memory_updater.last_updated_ts, 
+                    mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
+                                                            model.memory_updater.last_updated_memory,
+                                                            root_nodes,
+                                                            model.memory_updater.last_updated_ts,
                                                             threshold=SIM_THRESHOLD, any=SIM_ANY)
                     stable_flag = mailbox.get_full_node_stable_flag()
+                    if prev_stable_flag is not None:
+                        flips = (stable_flag != prev_stable_flag).sum().item()
+                        flip_ratio_log.append(flips / stable_flag.shape[0])
+                    prev_stable_flag = stable_flag.clone()
                     prep_time_breakdown["mailbox_updating"] += time.time() - t_prep_mailbox_s
 
                     t_forming_batch_s = time.time()
@@ -1347,6 +1358,10 @@ for e in range(train_param['epoch']):
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f} val loss:{:4f} ave_val loss:{:4f} final_val loss:{:4f}'.format(total_loss, ap, auc, sum(val_losses), sum(val_losses) / len(val_losses), val_losses[-1]))
     print('\ttotal time:{:.2f}s sample time:{:.2f}s prep time:{:.2f}s model time:{:.2f}s'.format(time_tot, time_sample, time_prep, time_model))
     print('\tprep time details: to_dgl_blocks:{:.2f}s pack_batch:{:.2f}s mailbox_updating:{:.2f}s'.format(prep_time_breakdown["to_dgl_blocks"], prep_time_breakdown["pack_batch"], prep_time_breakdown["mailbox_updating"]))
+    if flip_ratio_log:
+        flip_arr = np.array(flip_ratio_log)
+        print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
+        print('\tstable flag flip list: ' + ' '.join('{:.6f}'.format(r) for r in flip_ratio_log))
     # batch_latency.append(time_tot)
     
 
