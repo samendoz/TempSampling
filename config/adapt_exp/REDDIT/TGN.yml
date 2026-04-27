@@ -63,3 +63,7 @@ adaptive_update: false
 adaptive_update_similarity: 0.9
 adaptive_update_window_size: 2
 adaptive_update_epoch: 1
+
+
+# Enable pre fetch 
+prefetch: true

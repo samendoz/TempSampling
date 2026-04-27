@@ -35,7 +35,7 @@ adaptive_node_count: log  # disable, linear, log
 step_scale: 10
 step_size: 10
 minimum_scale_factor: 0.5
-max_batch_size: 8000
+max_batch_size: 3000
 
 observing: false
 lr_scale: true

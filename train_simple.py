@@ -97,6 +97,7 @@ from utils import *
 from memorys import *
 from color_sampler import *
 from adaptive_updater import *
+from prefetch_sampler import PrefetchManager
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 import nvtx
@@ -632,6 +633,8 @@ for e in range(train_param['epoch']):
         color_counts_dict = dict()
         batch_max_color_counts = list()
 
+        _use_prefetch = getattr(args, 'prefetch', False) and sampler is not None
+        prefetch = PrefetchManager(sampler) if _use_prefetch else None
 
         while ptr_start < train_edge_end:
             ########################################
@@ -697,7 +700,7 @@ for e in range(train_param['epoch']):
 
             root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
             ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-            
+
             #########################################
             # EXPERIMENTAL: adaptive_updater(not used for now)---based on node stable flag, we can reduce the number of root nodes
             ########################################
@@ -709,25 +712,34 @@ for e in range(train_param['epoch']):
             #         print("adaptive_updater error:", e)
             #         root_nodes = root_nodes
             #########################################
-            
-            
+
             pos_root_end = root_nodes.shape[0] * 2 // 3
             # EXPERIMENTAL(not used for now): adaptive_updater---minors
             # if pos_root_end_reduced is not None:
             #     pos_root_end = pos_root_end_reduced
 
+            # kick off sampler in background — unique_pos computation below overlaps with it
+            if prefetch is not None:
+                _no_neg = 'no_neg' in sample_param and sample_param['no_neg']
+                prefetch.schedule(
+                    root_nodes[:pos_root_end] if _no_neg else root_nodes,
+                    ts[:pos_root_end] if _no_neg else ts,
+                )
+
             unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
             if sampler is not None:
-                if 'no_neg' in sample_param and sample_param['no_neg']:
-                    # EXPERIMENTAL(not used for now): adaptive_updater---minors
-                    # if pos_root_end_reduced is not None:
-                    #     pos_root_end = pos_root_end_reduced
-                    # else:
-                    pos_root_end = root_nodes.shape[0] * 2 // 3
-                    sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                else:
-                    sampler.sample(root_nodes, ts)
-                ret = sampler.get_ret()
+                ret = prefetch.get() if prefetch is not None else None
+                if ret is None:
+                    if 'no_neg' in sample_param and sample_param['no_neg']:
+                        # EXPERIMENTAL(not used for now): adaptive_updater---minors
+                        # if pos_root_end_reduced is not None:
+                        #     pos_root_end = pos_root_end_reduced
+                        # else:
+                        pos_root_end = root_nodes.shape[0] * 2 // 3
+                        sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
+                    else:
+                        sampler.sample(root_nodes, ts)
+                    ret = sampler.get_ret()
                 # time_sample += ret[0].sample_time()
                 time_sample += time.time() - t_tot_s
             t_prep_s = time.time()
@@ -862,6 +874,9 @@ for e in range(train_param['epoch']):
         # "total_check", event_check, "break_point", event_check-event_stable)
         print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
         print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
+        if prefetch is not None:
+            print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
+            prefetch.clear()
         if args.observing:
             print("****************node_stable_acc****************", node_stable_acc)
         print("***********************************************")
