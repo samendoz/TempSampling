@@ -31,15 +31,19 @@ def reset_to_dgl_blocks_profile():
 
 
 def print_to_dgl_blocks_profile():
+    count = TO_DGL_BLOCKS_PROFILE_SUMMARY['count']
+    build_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time']
+    cuda_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']
+    total_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time']
+    
     print('=== to_dgl_blocks profiling summary ===')
-    print('blocks created:', TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
-    print('tensor/build time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time']))
-    print('.cuda() copy time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']))
-    print('total to_dgl_blocks time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time']))
-    if TO_DGL_BLOCKS_PROFILE_SUMMARY['count'] > 0:
-        print('avg tensor/build time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
-        print('avg cuda copy time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
-        print('avg total time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
+    print('blocks created: {:d}'.format(count))
+    print('total_tensor_build_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s'.format(build_time, cuda_time, total_time))
+    if count > 0:
+        avg_build = build_time / count
+        avg_cuda = cuda_time / count
+        avg_total = total_time / count
+        print('per_block_tensor_build: {:.6f}s per_block_cuda_copy: {:.6f}s per_block_total: {:.6f}s'.format(avg_build, avg_cuda, avg_total))
 
 
 def check_memory_usage():

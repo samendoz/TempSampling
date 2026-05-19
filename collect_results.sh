@@ -79,6 +79,8 @@ timing_re     = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep
 best_re       = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
 flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]+).*?min:([\d.]+).*?max:([\d.]+).*?batches:(\d+)')
 flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
+profile_re    = re.compile(r'total_tensor_build_time: ([\d.]+)s\s+cuda_copy_time: ([\d.]+)s\s+total_to_dgl_blocks_time: ([\d.]+)s')
+profile_per_re = re.compile(r'per_block_tensor_build: ([\d.]+)s\s+per_block_cuda_copy: ([\d.]+)s\s+per_block_total: ([\d.]+)s')
 
 rows = []
 flip_dist_rows = []
@@ -117,6 +119,16 @@ with open(log_path) as f:
             for batch_idx, val in enumerate(m.group(1).split()):
                 flip_dist_rows.append({'epoch': epoch, 'batch': batch_idx, 'flip_ratio': val})
             continue
+        m = profile_re.search(line)
+        if m and current is not None:
+            current.update({'dgl_build_time': m.group(1), 'dgl_cuda_time': m.group(2),
+                            'dgl_total_time': m.group(3)})
+            continue
+        m = profile_per_re.search(line)
+        if m and current is not None:
+            current.update({'dgl_avg_build': m.group(1), 'dgl_avg_cuda': m.group(2),
+                            'dgl_avg_total': m.group(3)})
+            continue
         m = best_re.search(line)
         if m:
             rows.append({'epoch': 'best', 'val_ap': m.group(2), 'val_auc': m.group(3),
@@ -130,6 +142,8 @@ if not rows:
 
 fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'time_total', 'time_sample', 'time_prep', 'time_model',
+              'dgl_build_time', 'dgl_cuda_time', 'dgl_total_time',
+              'dgl_avg_build', 'dgl_avg_cuda', 'dgl_avg_total',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
               'best_epoch']
 with open(csv_path, 'w', newline='') as f:
