@@ -118,6 +118,7 @@ set_seed(0)
 if args.profile_to_dgl_blocks:
     print("[INFO] Enabling fine-grained to_dgl_blocks profiling")
     set_to_dgl_blocks_profiling(True)
+    reset_to_dgl_blocks_profile()
 
 g, df = load_graph(args.data)
 print("graph loaded...")
@@ -1380,6 +1381,7 @@ for e in range(train_param['epoch']):
     print('\tprep time details: to_dgl_blocks:{:.2f}s pack_batch:{:.2f}s mailbox_updating:{:.2f}s'.format(prep_time_breakdown["to_dgl_blocks"], prep_time_breakdown["pack_batch"], prep_time_breakdown["mailbox_updating"]))
     if args.profile_to_dgl_blocks:
         print_to_dgl_blocks_profile()
+        reset_to_dgl_blocks_profile()
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
