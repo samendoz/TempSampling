@@ -7,6 +7,41 @@ import pandas as pd
 import numpy as np
 import psutil
 
+TO_DGL_BLOCKS_PROFILE = False
+TO_DGL_BLOCKS_PROFILE_SUMMARY = {
+    'count': 0,
+    'tensor_and_build_time': 0.0,
+    'cuda_copy_time': 0.0,
+    'total_time': 0.0,
+}
+
+def set_to_dgl_blocks_profiling(enabled=True):
+    global TO_DGL_BLOCKS_PROFILE
+    TO_DGL_BLOCKS_PROFILE = enabled
+
+
+def reset_to_dgl_blocks_profile():
+    global TO_DGL_BLOCKS_PROFILE_SUMMARY
+    TO_DGL_BLOCKS_PROFILE_SUMMARY = {
+        'count': 0,
+        'tensor_and_build_time': 0.0,
+        'cuda_copy_time': 0.0,
+        'total_time': 0.0,
+    }
+
+
+def print_to_dgl_blocks_profile():
+    print('=== to_dgl_blocks profiling summary ===')
+    print('blocks created:', TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
+    print('tensor/build time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time']))
+    print('.cuda() copy time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']))
+    print('total to_dgl_blocks time: {:.6f}s'.format(TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time']))
+    if TO_DGL_BLOCKS_PROFILE_SUMMARY['count'] > 0:
+        print('avg tensor/build time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
+        print('avg cuda copy time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
+        print('avg total time:', TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] / TO_DGL_BLOCKS_PROFILE_SUMMARY['count'])
+
+
 def check_memory_usage():
     # Getting % usage of virtual_memory ( 3rd field) and usage of virtual_memory in GB ( 4th field)
     print('RAM memory % used:', psutil.virtual_memory()[2], 'GB used:', psutil.virtual_memory()[3]/(1024*1024*1024))
@@ -62,8 +97,11 @@ def parse_config(f):
     return sample_param, memory_param, gnn_param, train_param
 
 def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
+    global TO_DGL_BLOCKS_PROFILE_SUMMARY
     mfgs = list()
+    profile = TO_DGL_BLOCKS_PROFILE
     for r in ret:
+        start = time.time()
         if not reverse:
             b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
             b.srcdata['ID'] = torch.from_numpy(r.nodes())
@@ -75,10 +113,25 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
             b.dstdata['ts'] = torch.from_numpy(r.ts())
         b.edata['ID'] = torch.from_numpy(r.eid())
+        build_end = time.time()
         if cuda:
-            mfgs.append(b.to('cuda:0'))
-        else:
+            cuda_start = time.time()
+            b = b.to('cuda:0')
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            cuda_end = time.time()
             mfgs.append(b)
+        else:
+            cuda_start = build_end
+            cuda_end = build_end
+            mfgs.append(b)
+        end = time.time()
+
+        if profile:
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['count'] += 1
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time'] += (build_end - start)
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
     mfgs.reverse()
     return mfgs

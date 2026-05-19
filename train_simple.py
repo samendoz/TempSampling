@@ -57,6 +57,7 @@ parser.add_argument('--observe_batch_utilization', action='store_true', help='ob
 
 parser.add_argument('--batch_level_log', action='store_true', help='whether to log batch level information')
 parser.add_argument('--profile_stable', action='store_true', help='whether to profile stable nodes')
+parser.add_argument('--profile_to_dgl_blocks', action='store_true', help='whether to enable fine-grained to_dgl_blocks profiling')
 parser.add_argument('--adaptive_update', action='store_true', help='whether to use adaptive update based on node similarity')
 parser.add_argument('--extra_config', type=str, default='', help='path to extra config parameters for the trainer/batching, e.g., --extra_config "config/adapt_exp/WIKI/TGN.yml"')
 
@@ -113,6 +114,10 @@ def set_seed(seed):
 
 print("setting seed...")
 set_seed(0)
+
+if args.profile_to_dgl_blocks:
+    print("[INFO] Enabling fine-grained to_dgl_blocks profiling")
+    set_to_dgl_blocks_profiling(True)
 
 g, df = load_graph(args.data)
 print("graph loaded...")
@@ -1373,6 +1378,8 @@ for e in range(train_param['epoch']):
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f} val loss:{:4f} ave_val loss:{:4f} final_val loss:{:4f}'.format(total_loss, ap, auc, sum(val_losses), sum(val_losses) / len(val_losses), val_losses[-1]))
     print('\ttotal time:{:.2f}s sample time:{:.2f}s prep time:{:.2f}s model time:{:.2f}s'.format(time_tot, time_sample, time_prep, time_model))
     print('\tprep time details: to_dgl_blocks:{:.2f}s pack_batch:{:.2f}s mailbox_updating:{:.2f}s'.format(prep_time_breakdown["to_dgl_blocks"], prep_time_breakdown["pack_batch"], prep_time_breakdown["mailbox_updating"]))
+    if args.profile_to_dgl_blocks:
+        print_to_dgl_blocks_profile()
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
