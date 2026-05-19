@@ -551,6 +551,8 @@ for e in range(train_param['epoch']):
     time_mem = 0
     time_tot = 0
     total_loss = 0
+    if args.profile_to_dgl_blocks:
+        reset_to_dgl_blocks_profile()
 
     ########################################
     # EXPERIMENTAL: adaptive_updater---enable/disable adaptive updater
