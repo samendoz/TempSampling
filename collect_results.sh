@@ -79,6 +79,7 @@ timing_re     = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep
 best_re       = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
 flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]+).*?min:([\d.]+).*?max:([\d.]+).*?batches:(\d+)')
 flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
+prep_re       = re.compile(r'prep time details: to_dgl_blocks:([\d.]+)s prepare_input:([\d.]+)s mailbox_prep:([\d.]+)s mailbox_update:([\d.]+)s batch_postprocessing:([\d.]+)s')
 profile_re    = re.compile(r'total_tensor_build_time: ([\d.]+)s\s+cuda_copy_time: ([\d.]+)s\s+total_to_dgl_blocks_time: ([\d.]+)s')
 profile_per_re = re.compile(r'per_block_tensor_build: ([\d.]+)s\s+per_block_cuda_copy: ([\d.]+)s\s+per_block_total: ([\d.]+)s')
 
@@ -119,6 +120,16 @@ with open(log_path) as f:
             for batch_idx, val in enumerate(m.group(1).split()):
                 flip_dist_rows.append({'epoch': epoch, 'batch': batch_idx, 'flip_ratio': val})
             continue
+        m = prep_re.search(line)
+        if m and current is not None:
+            current.update({
+                'prep_to_dgl_blocks': m.group(1),
+                'prep_prepare_input': m.group(2),
+                'prep_mailbox_prep': m.group(3),
+                'prep_mailbox_update': m.group(4),
+                'prep_batch_postprocessing': m.group(5),
+            })
+            continue
         m = profile_re.search(line)
         if m and current is not None:
             current.update({'dgl_build_time': m.group(1), 'dgl_cuda_time': m.group(2),
@@ -142,6 +153,7 @@ if not rows:
 
 fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'time_total', 'time_sample', 'time_prep', 'time_model',
+              'prep_to_dgl_blocks', 'prep_prepare_input', 'prep_mailbox_prep', 'prep_mailbox_update', 'prep_batch_postprocessing',
               'dgl_build_time', 'dgl_cuda_time', 'dgl_total_time',
               'dgl_avg_build', 'dgl_avg_cuda', 'dgl_avg_total',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',

@@ -573,7 +573,13 @@ for e in range(train_param['epoch']):
     model_latency = []
     other_latency = []
     batch_sizes = []
-    prep_time_breakdown = {"to_dgl_blocks": 0, "mailbox_updating":0, "pack_batch":0}
+    prep_time_breakdown = {
+        "to_dgl_blocks": 0,
+        "prepare_input": 0,
+        "mailbox_prep": 0,
+        "mailbox_update": 0,
+        "batch_postprocessing": 0,
+    }
     color_time_breakdown = {"forming_batch": 0, "coloring": 0, "model training": 0, "record memory": 0, "others": 0}
     batching_time_breakdown = {"sampling":0, "updating_indptr":0, "updating_stable_flag":0, "others":0}
     #Variables to determine the stable flag ratio
@@ -758,11 +764,13 @@ for e in range(train_param['epoch']):
             else:
                 mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
             prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-            t_prep_prepare_s = time.time()
+            t_prepare_s = time.time()
             mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+            prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
             if mailbox is not None:
+                t_mailbox_prep_s = time.time()
                 mailbox.prep_input_mails(mfgs[0])
-            prep_time_breakdown["pack_batch"] += time.time() - t_prep_prepare_s
+                prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
             ########################################
             # check input mails
@@ -798,10 +806,14 @@ for e in range(train_param['epoch']):
                 eid = rows['Unnamed: 0'].values
                 mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
                 block = None
+                t_batch_post_s = time.time()
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
-                prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-                t_prep_mailbox_s = time.time()
+                    prep_time_breakdown["to_dgl_blocks"] += time.time() - t_batch_post_s
+                    t_prep_mailbox_s = time.time()
+                else:
+                    block = None
+                    t_prep_mailbox_s = time.time()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                 mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
                                                            model.memory_updater.last_updated_memory,
@@ -813,7 +825,8 @@ for e in range(train_param['epoch']):
                     flips = (stable_flag != prev_stable_flag).sum().item()
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
-                prep_time_breakdown["mailbox_updating"] += time.time() - t_prep_mailbox_s
+                prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
+                t_batch_post_s = time.time()
 
                 t_forming_batch_s = time.time()
                 # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)
@@ -1152,11 +1165,13 @@ for e in range(train_param['epoch']):
                 else:
                     mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
                 prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-                t_prep_prepare_s = time.time()
+                t_prepare_s = time.time()
                 mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+                prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
                 if mailbox is not None:
+                    t_mailbox_prep_s = time.time()
                     mailbox.prep_input_mails(mfgs[0])
-                prep_time_breakdown["pack_batch"] += time.time() - t_prep_prepare_s
+                    prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
                 time_prep += time.time() - t_prep_s
                 ########################################
                 # check input mails
@@ -1206,7 +1221,8 @@ for e in range(train_param['epoch']):
                         flips = (stable_flag != prev_stable_flag).sum().item()
                         flip_ratio_log.append(flips / stable_flag.shape[0])
                     prev_stable_flag = stable_flag.clone()
-                    prep_time_breakdown["mailbox_updating"] += time.time() - t_prep_mailbox_s
+                    prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
+                    t_batch_post_s = time.time()
 
                     t_forming_batch_s = time.time()
                     # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)
@@ -1223,6 +1239,7 @@ for e in range(train_param['epoch']):
                     color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
                     color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                     batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
+                prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
                 time_prep += time.time() - t_prep_s
                 batch_time = time.time() - t_tot_s
                 time_tot += batch_time
@@ -1284,11 +1301,13 @@ for e in range(train_param['epoch']):
             else:
                 mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
             prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-            t_prep_prepare_s = time.time()
+            t_prepare_s = time.time()
             mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+            prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
             if mailbox is not None:
+                t_mailbox_prep_s = time.time()
                 mailbox.prep_input_mails(mfgs[0])
-            prep_time_breakdown["pack_batch"] += time.time() - t_prep_prepare_s
+                prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
             ########################################
             # check input mails
@@ -1347,17 +1366,24 @@ for e in range(train_param['epoch']):
 
             # sys.exit(0)
             if mailbox is not None:
+                t_batch_post_s = time.time()
                 eid = rows['Unnamed: 0'].values
                 mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
-                block = None
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
-                prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-                t_prep_mailbox_s = time.time()
+                    prep_time_breakdown["to_dgl_blocks"] += time.time() - t_batch_post_s
+                    t_prep_mailbox_s = time.time()
+                else:
+                    block = None
+                    t_prep_mailbox_s = time.time()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                 mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
-                prep_time_breakdown["mailbox_updating"] += time.time() - t_prep_mailbox_s
+                prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
+                t_batch_post_s = time.time()
             time_prep += time.time() - t_prep_s
+            if mailbox is not None:
+                prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
+            batch_time = time.time() - t_tot_s
             batch_time = time.time() - t_tot_s
             time_tot += batch_time
 
@@ -1380,7 +1406,13 @@ for e in range(train_param['epoch']):
 
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f} val loss:{:4f} ave_val loss:{:4f} final_val loss:{:4f}'.format(total_loss, ap, auc, sum(val_losses), sum(val_losses) / len(val_losses), val_losses[-1]))
     print('\ttotal time:{:.2f}s sample time:{:.2f}s prep time:{:.2f}s model time:{:.2f}s'.format(time_tot, time_sample, time_prep, time_model))
-    print('\tprep time details: to_dgl_blocks:{:.2f}s pack_batch:{:.2f}s mailbox_updating:{:.2f}s'.format(prep_time_breakdown["to_dgl_blocks"], prep_time_breakdown["pack_batch"], prep_time_breakdown["mailbox_updating"]))
+    print('\tprep time details: to_dgl_blocks:{:.2f}s prepare_input:{:.2f}s mailbox_prep:{:.2f}s mailbox_update:{:.2f}s batch_postprocessing:{:.2f}s'.format(
+        prep_time_breakdown["to_dgl_blocks"],
+        prep_time_breakdown["prepare_input"],
+        prep_time_breakdown["mailbox_prep"],
+        prep_time_breakdown["mailbox_update"],
+        prep_time_breakdown["batch_postprocessing"],
+    ))
     if args.profile_to_dgl_blocks:
         print_to_dgl_blocks_profile()
         reset_to_dgl_blocks_profile()
