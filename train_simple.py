@@ -767,10 +767,10 @@ for e in range(train_param['epoch']):
             t_prepare_s = time.time()
             mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
             prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
+            t_mailbox_prep_s = time.time()
             if mailbox is not None:
-                t_mailbox_prep_s = time.time()
                 mailbox.prep_input_mails(mfgs[0])
-                prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
+            prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
             ########################################
             # check input mails
@@ -802,18 +802,17 @@ for e in range(train_param['epoch']):
             # batch level processing observation
             ########################################
 
+            t_batch_post_s = time.time()
             if mailbox is not None:
                 eid = rows['Unnamed: 0'].values
                 mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
                 block = None
-                t_batch_post_s = time.time()
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
                     prep_time_breakdown["to_dgl_blocks"] += time.time() - t_batch_post_s
-                    t_prep_mailbox_s = time.time()
                 else:
                     block = None
-                    t_prep_mailbox_s = time.time()
+                t_prep_mailbox_s = time.time()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                 mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
                                                            model.memory_updater.last_updated_memory,
@@ -826,7 +825,6 @@ for e in range(train_param['epoch']):
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
                 prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
-                t_batch_post_s = time.time()
 
                 t_forming_batch_s = time.time()
                 # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)

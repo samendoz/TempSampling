@@ -82,6 +82,9 @@ flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
 prep_re       = re.compile(r'prep time details: to_dgl_blocks:([\d.]+)s prepare_input:([\d.]+)s mailbox_prep:([\d.]+)s mailbox_update:([\d.]+)s batch_postprocessing:([\d.]+)s')
 profile_re    = re.compile(r'total_tensor_build_time: ([\d.]+)s\s+cuda_copy_time: ([\d.]+)s\s+total_to_dgl_blocks_time: ([\d.]+)s')
 profile_per_re = re.compile(r'per_block_tensor_build: ([\d.]+)s\s+per_block_cuda_copy: ([\d.]+)s\s+per_block_total: ([\d.]+)s')
+sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
+
+#add the results fetched by sampling_re to the CSV as well, with keys sampling_time, updating_indptr_time, updating_stable_flag_time
 
 rows = []
 flip_dist_rows = []
@@ -144,6 +147,12 @@ with open(log_path) as f:
         if m:
             rows.append({'epoch': 'best', 'val_ap': m.group(2), 'val_auc': m.group(3),
                          'best_epoch': m.group(1)})
+            continue
+        m = sampling_re.search(line)
+        if m and current is not None:
+            current.update({'sampling_time': m.group(1), 'updating_indptr_time': m.group(2),
+                            'updating_stable_flag_time': m.group(3)})
+            continue
 
 flush(current, rows)
 
@@ -157,7 +166,7 @@ fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'dgl_build_time', 'dgl_cuda_time', 'dgl_total_time',
               'dgl_avg_build', 'dgl_avg_cuda', 'dgl_avg_total',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
-              'best_epoch']
+              'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time']
 with open(csv_path, 'w', newline='') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
     w.writeheader()
