@@ -1171,6 +1171,7 @@ for e in range(train_param['epoch']):
                     mailbox.prep_input_mails(mfgs[0])
                     prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
                 time_prep += time.time() - t_prep_s
+                print("First prep time:", time_prep)
                 ########################################
                 # check input mails
                 ########################################
@@ -1239,6 +1240,7 @@ for e in range(train_param['epoch']):
                     batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
                 prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
                 time_prep += time.time() - t_prep_s
+                print("Second prep time:", time_prep)
                 batch_time = time.time() - t_tot_s
                 time_tot += batch_time
                 total_train_time_chunk += batch_time
@@ -1307,6 +1309,7 @@ for e in range(train_param['epoch']):
                 mailbox.prep_input_mails(mfgs[0])
                 prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
+            print("Third prep time:", time_prep)
             ########################################
             # check input mails
             ########################################
@@ -1387,6 +1390,7 @@ for e in range(train_param['epoch']):
 
             batch_latency.append(batch_time)
             other_latency.append(batch_time - model_latency[-1])
+            print("Fourth prep time:", time_prep)
 
     if args.mode == 'observing' or args.mode == 'observing_large':
         print("moving_node_usage_stats", moving_node_usage_stats)
