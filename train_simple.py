@@ -772,6 +772,7 @@ for e in range(train_param['epoch']):
                 mailbox.prep_input_mails(mfgs[0])
             prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
+            print("First prep time", time_prep)
             ########################################
             # check input mails
             ########################################
@@ -842,6 +843,7 @@ for e in range(train_param['epoch']):
                 color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                 batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
             time_prep += time.time() - t_prep_s
+            print("Second prep time", time_prep)
             batch_time = time.time() - t_tot_s
             time_tot += batch_time
             color_time_breakdown["model training"] += batch_time
