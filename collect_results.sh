@@ -83,6 +83,7 @@ prep_re       = re.compile(r'prep time details: to_dgl_blocks:([\d.]+)s prepare_
 profile_re    = re.compile(r'total_tensor_build_time: ([\d.]+)s\s+cuda_copy_time: ([\d.]+)s\s+total_to_dgl_blocks_time: ([\d.]+)s')
 profile_per_re = re.compile(r'per_block_tensor_build: ([\d.]+)s\s+per_block_cuda_copy: ([\d.]+)s\s+per_block_total: ([\d.]+)s')
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
+estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s')
 
 #add the results fetched by sampling_re to the CSV as well, with keys sampling_time, updating_indptr_time, updating_stable_flag_time
 
@@ -153,6 +154,17 @@ with open(log_path) as f:
             current.update({'sampling_time': m.group(1), 'updating_indptr_time': m.group(2),
                             'updating_stable_flag_time': m.group(3)})
             continue
+        m = estimated_prep_times.search(line)
+        if m and current is not None:
+            current.update({
+                'estimated_prep_to_dgl_blocks': m.group(1),
+                'estimated_prepare_input': m.group(2),
+                'estimated_mailbox_prep': m.group(3),
+                'estimated_post_to_dgl_blocks': m.group(4),
+                'estimated_mailbox_update': m.group(5),
+                'estimated_updating_indptr_and_stable_flag': m.group(6),
+            })
+            continue
 
 flush(current, rows)
 
@@ -166,7 +178,8 @@ fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'dgl_build_time', 'dgl_cuda_time', 'dgl_total_time',
               'dgl_avg_build', 'dgl_avg_cuda', 'dgl_avg_total',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
-              'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time']
+              'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time',
+              'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_updating_indptr_and_stable_flag']
 with open(csv_path, 'w', newline='') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
     w.writeheader()

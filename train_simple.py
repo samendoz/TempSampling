@@ -582,6 +582,12 @@ for e in range(train_param['epoch']):
     }
     color_time_breakdown = {"forming_batch": 0, "coloring": 0, "model training": 0, "record memory": 0, "others": 0}
     batching_time_breakdown = {"sampling":0, "updating_indptr":0, "updating_stable_flag":0, "others":0}
+    estimated_prep_times = {"initial_to_dgl_blocks": 0, 
+                            "prepare_input": 0, 
+                            "mailbox_prep": 0, 
+                            "post_to_dgl_blocks": 0,
+                            "mailbox_update": 0, 
+                            "updating_indptr_and_stable_flag": 0}
     #Variables to determine the stable flag ratio
     flip_ratio_log = []
     prev_stable_flag = None
@@ -763,16 +769,27 @@ for e in range(train_param['epoch']):
                 mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=ALL_GPU)
             else:
                 mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
+            
+            #Valiating the time for to_dgl_blocks conversion
+            estimated_prep_times["initial_to_dgl_blocks"] += time.time() - t_prep_s
+
             prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
             t_prepare_s = time.time()
             mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
             prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
+
+            #Valiating the time for prepare_input conversion
+            estimated_prep_times["prepare_input"] += time.time() - t_prepare_s
+
             t_mailbox_prep_s = time.time()
             if mailbox is not None:
                 mailbox.prep_input_mails(mfgs[0])
             prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
+
+            #valuating the time for mailbox preparation
+            estimated_prep_times["mailbox_prep"] += time.time() - t_mailbox_prep_s
+
             time_prep += time.time() - t_prep_s
-            print("First prep time", time_prep)
             ########################################
             # check input mails
             ########################################
@@ -788,6 +805,8 @@ for e in range(train_param['epoch']):
             optimizer.step()
             nvtx.end_range(rng)
             time_model += time.time() - t_model_s
+
+            #restart the timer for post processing after model update
             t_prep_s = time.time()
             model_latency.append(time.time() - t_tot_s)
 
@@ -813,6 +832,8 @@ for e in range(train_param['epoch']):
                     prep_time_breakdown["to_dgl_blocks"] += time.time() - t_batch_post_s
                 else:
                     block = None
+                estimated_prep_times["post_to_dgl_blocks"] += time.time() - t_prep_s
+
                 t_prep_mailbox_s = time.time()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                 mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
@@ -826,6 +847,8 @@ for e in range(train_param['epoch']):
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
                 prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
+                
+                estimated_prep_times["mailbox_update"] += time.time() - t_prep_mailbox_s
 
                 t_forming_batch_s = time.time()
                 # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)
@@ -837,13 +860,16 @@ for e in range(train_param['epoch']):
                 # mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
                 color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                 batching_time_breakdown["updating_stable_flag"] += time.time() - t_flag_update_s
+
+                estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
             else:
                 t_forming_batch_s = time.time()
                 color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
                 color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                 batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
+                estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
+            
             time_prep += time.time() - t_prep_s
-            print("Second prep time", time_prep)
             batch_time = time.time() - t_tot_s
             time_tot += batch_time
             color_time_breakdown["model training"] += batch_time
@@ -895,6 +921,9 @@ for e in range(train_param['epoch']):
         # "total_check", event_check, "break_point", event_check-event_stable)
         print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
         print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
+        #estimated_prep_times
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(estimated_prep_times["initial_to_dgl_blocks"], estimated_prep_times["prepare_input"], 
+            estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["updating_indptr_and_stable_flag"]))
         if prefetch is not None:
             print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
             prefetch.clear()
