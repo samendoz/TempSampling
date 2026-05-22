@@ -1194,15 +1194,25 @@ for e in range(train_param['epoch']):
                 else:
                     mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
                 prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
+
+                #Valiating the time for to_dgl_blocks conversion
+                estimated_prep_times["initial_to_dgl_blocks"] += time.time() - t_prep_s
+
                 t_prepare_s = time.time()
                 mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
                 prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
+
+                #Valiating the time for prepare_input conversion
+                estimated_prep_times["prepare_input"] += time.time() - t_prepare_s
+
                 if mailbox is not None:
                     t_mailbox_prep_s = time.time()
                     mailbox.prep_input_mails(mfgs[0])
                     prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
                 time_prep += time.time() - t_prep_s
-                print("First prep time:", time_prep)
+                
+                #valuating the time for mailbox preparation
+                estimated_prep_times["mailbox_prep"] += time.time() - t_mailbox_prep_s
                 ########################################
                 # check input mails
                 ########################################
@@ -1239,6 +1249,9 @@ for e in range(train_param['epoch']):
                     if memory_param['deliver_to'] == 'neighbors':
                         block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
                     prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
+
+                    estimated_prep_times["post_to_dgl_blocks"] += time.time() - t_prep_s
+
                     t_prep_mailbox_s = time.time()
                     mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                     mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
@@ -1252,6 +1265,9 @@ for e in range(train_param['epoch']):
                         flip_ratio_log.append(flips / stable_flag.shape[0])
                     prev_stable_flag = stable_flag.clone()
                     prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
+
+                    estimated_prep_times["mailbox_update"] += time.time() - t_prep_mailbox_s
+
                     t_batch_post_s = time.time()
 
                     t_forming_batch_s = time.time()
@@ -1264,14 +1280,17 @@ for e in range(train_param['epoch']):
                     # mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
                     color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                     batching_time_breakdown["updating_stable_flag"] += time.time() - t_flag_update_s
+
+                    estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
                 else:
                     t_forming_batch_s = time.time()
                     color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
                     color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                     batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
+                    estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
+                    
                 prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
                 time_prep += time.time() - t_prep_s
-                print("Second prep time:", time_prep)
                 batch_time = time.time() - t_tot_s
                 time_tot += batch_time
                 total_train_time_chunk += batch_time
@@ -1298,6 +1317,8 @@ for e in range(train_param['epoch']):
             print('\tChunk total training time:{:.2f}s, chunk coloring time {}, total coloring time {}'.format(total_train_time_chunk, total_coloring_time_chunk, total_coloring_time))
             print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
             print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
+            print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(estimated_prep_times["initial_to_dgl_blocks"], estimated_prep_times["prepare_input"], 
+            estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["updating_indptr_and_stable_flag"]))
     else:
         # for i, rows in df[:train_edge_end].groupby(group_indexes[random.randint(0, len(group_indexes) - 1)]):
         for i, rows in df[:train_edge_end].groupby(group_idx):
@@ -1340,7 +1361,6 @@ for e in range(train_param['epoch']):
                 mailbox.prep_input_mails(mfgs[0])
                 prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
             time_prep += time.time() - t_prep_s
-            print("Third prep time:", time_prep)
             ########################################
             # check input mails
             ########################################
@@ -1421,7 +1441,6 @@ for e in range(train_param['epoch']):
 
             batch_latency.append(batch_time)
             other_latency.append(batch_time - model_latency[-1])
-            print("Fourth prep time:", time_prep)
 
     if args.mode == 'observing' or args.mode == 'observing_large':
         print("moving_node_usage_stats", moving_node_usage_stats)
