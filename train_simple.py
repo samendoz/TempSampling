@@ -924,6 +924,7 @@ for e in range(train_param['epoch']):
         #estimated_prep_times
         print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(estimated_prep_times["initial_to_dgl_blocks"], estimated_prep_times["prepare_input"], 
             estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["updating_indptr_and_stable_flag"]))
+        print('\t Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
         if prefetch is not None:
             print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
             prefetch.clear()
@@ -1465,6 +1466,9 @@ for e in range(train_param['epoch']):
         prep_time_breakdown["mailbox_update"],
         prep_time_breakdown["batch_postprocessing"],
     ))
+    print('\t Initial Captured prep time ratio: {:.2f}%'.format(100 * sum(prep_time_breakdown.values()) / time_prep if time_prep > 0 else 0))
+    print('\t Estimated Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
+
     if args.profile_to_dgl_blocks:
         print_to_dgl_blocks_profile()
         reset_to_dgl_blocks_profile()
