@@ -1476,7 +1476,7 @@ for e in range(train_param['epoch']):
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
-        print('\tstable flag flip list: ' + ' '.join('{:.6f}'.format(r) for r in flip_ratio_log))
+        # print('\tstable flag flip list: ' + ' '.join('{:.6f}'.format(r) for r in flip_ratio_log))
     # batch_latency.append(time_tot)
     
 
