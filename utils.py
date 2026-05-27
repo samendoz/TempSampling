@@ -10,7 +10,7 @@ import psutil
 TO_DGL_BLOCKS_PROFILE = False
 TO_DGL_BLOCKS_PROFILE_SUMMARY = {
     'count': 0,
-    'tensor_and_build_time': 0.0,
+    'create_block_time': 0.0,
     'cuda_copy_time': 0.0,
     'total_time': 0.0,
 }
@@ -24,7 +24,7 @@ def reset_to_dgl_blocks_profile():
     global TO_DGL_BLOCKS_PROFILE_SUMMARY
     TO_DGL_BLOCKS_PROFILE_SUMMARY = {
         'count': 0,
-        'tensor_and_build_time': 0.0,
+        'create_block_time': 0.0,
         'cuda_copy_time': 0.0,
         'total_time': 0.0,
     }
@@ -32,18 +32,16 @@ def reset_to_dgl_blocks_profile():
 
 def print_to_dgl_blocks_profile():
     count = TO_DGL_BLOCKS_PROFILE_SUMMARY['count']
-    build_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time']
-    cuda_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']
+    create_block_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['create_block_time']
+    cuda_copy_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']
     total_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time']
     
     print('=== to_dgl_blocks profiling summary ===')
     print('blocks created: {:d}'.format(count))
-    print('total_tensor_build_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s'.format(build_time, cuda_time, total_time))
-    if count > 0:
-        avg_build = build_time / count
-        avg_cuda = cuda_time / count
-        avg_total = total_time / count
-        print('per_block_tensor_build: {:.6f}s per_block_cuda_copy: {:.6f}s per_block_total: {:.6f}s'.format(avg_build, avg_cuda, avg_total))
+    print('create_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time))
+
+def get_to_dgl_blocks_profile_summary():
+    return TO_DGL_BLOCKS_PROFILE_SUMMARY
 
 
 def check_memory_usage():
@@ -117,23 +115,22 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
             b.dstdata['ts'] = torch.from_numpy(r.ts())
         b.edata['ID'] = torch.from_numpy(r.eid())
-        build_end = time.time()
+        create_block_end_time = time.time()
+
+        cuda_start = time.time()
         if cuda:
-            cuda_start = time.time()
             b = b.to('cuda:0')
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-            cuda_end = time.time()
             mfgs.append(b)
         else:
-            cuda_start = build_end
-            cuda_end = build_end
             mfgs.append(b)
+        cuda_end = time.time()
         end = time.time()
 
         if profile:
             TO_DGL_BLOCKS_PROFILE_SUMMARY['count'] += 1
-            TO_DGL_BLOCKS_PROFILE_SUMMARY['tensor_and_build_time'] += (build_end - start)
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['create_block_time'] += (create_block_end_time - start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
@@ -172,14 +169,32 @@ def to_dgl_blocks_ob(ret, hist, reverse=False, cuda=True):
 
 
 def node_to_dgl_blocks(root_nodes, ts, cuda=True):
+    global TO_DGL_BLOCKS_PROFILE_SUMMARY
     mfgs = list()
+    profile = TO_DGL_BLOCKS_PROFILE
+
+    start = time.time()
+    
     b = dgl.create_block(([],[]), num_src_nodes=root_nodes.shape[0], num_dst_nodes=root_nodes.shape[0])
     b.srcdata['ID'] = torch.from_numpy(root_nodes)
     b.srcdata['ts'] = torch.from_numpy(ts)
+
+    create_block_end_time = time.time()
+
+    cuda_start = time.time()
     if cuda:
         mfgs.insert(0, [b.to('cuda:0')])
     else:
         mfgs.insert(0, [b])
+    cuda_end = time.time()
+    end = time.time()
+    
+    if profile:
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['count'] += 1
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['create_block_time'] += (create_block_end_time - start)
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
+    
     return mfgs
 
 def mfgs_to_cuda(mfgs):
