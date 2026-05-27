@@ -932,13 +932,13 @@ for e in range(train_param['epoch']):
             print("****************node_stable_acc****************", node_stable_acc)
         
         if args.profile_to_dgl_blocks:
-            input("END OF BATCH TRAINING - Press Enter to see to_dgl_blocks profile...")
+            # input("END OF BATCH TRAINING - Press Enter to see to_dgl_blocks profile...")
             print_to_dgl_blocks_profile()
             tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
-            print(tmp_to_dgl_blocks_profile)
-            print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            # print(tmp_to_dgl_blocks_profile)
+            print("\t Captured Training Loop to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
             # reset_to_dgl_blocks_profile()
-            input("Press Enter to continue training...")
+            # input("Press Enter to continue training...")
 
     
         print("***********************************************")
@@ -1485,7 +1485,7 @@ for e in range(train_param['epoch']):
     print('\t Initial Captured prep time ratio: {:.2f}%'.format(100 * sum(prep_time_breakdown.values()) / time_prep if time_prep > 0 else 0))
     print('\t Estimated Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
     print('\t Evaluation time:{:.2f}s'.format(eval_time))
-    
+
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
@@ -1493,13 +1493,13 @@ for e in range(train_param['epoch']):
     # batch_latency.append(time_tot)
 
     if args.profile_to_dgl_blocks:
-            input("\tEND OF EPOCH - Press Enter to see to_dgl_blocks profile...")
-            print_to_dgl_blocks_profile()
-            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
-            print(tmp_to_dgl_blocks_profile)
-            print("\tCaptured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            # input("\tEND OF EPOCH - Press Enter to see to_dgl_blocks profile...")
+            # print_to_dgl_blocks_profile()
+            # tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            # print(tmp_to_dgl_blocks_profile)
+            print("\tCaptured Epoch to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
             reset_to_dgl_blocks_profile()
-            input("\tPress Enter to continue...")
+            # input("\tPress Enter to continue...")
     
 
 
