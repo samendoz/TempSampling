@@ -36,9 +36,9 @@ def print_to_dgl_blocks_profile():
     cuda_copy_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time']
     total_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time']
     
-    print('=== to_dgl_blocks profiling summary ===')
-    print('blocks created: {:d}'.format(count))
-    print('create_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time))
+    print('\t=== to_dgl_blocks profiling summary ===')
+    print('\tblocks created: {:d}'.format(count))
+    print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time))
 
 def get_to_dgl_blocks_profile_summary():
     return TO_DGL_BLOCKS_PROFILE_SUMMARY

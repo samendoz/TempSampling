@@ -937,7 +937,7 @@ for e in range(train_param['epoch']):
             tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
             print(tmp_to_dgl_blocks_profile)
             print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
-            reset_to_dgl_blocks_profile()
+            # reset_to_dgl_blocks_profile()
             input("Press Enter to continue training...")
 
     
@@ -1069,6 +1069,7 @@ for e in range(train_param['epoch']):
         2. run the table coloring for each chunk in sequence
         3. form batch within each chunk
         """
+        print("Entering batch stable freezing large mode...")
         if mailbox is not None:
             mailbox.set_stablize_recorder(window_size=SIM_WINDOW)
         # chunk_size = 10000000 # 10 million
@@ -1332,6 +1333,7 @@ for e in range(train_param['epoch']):
             estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["updating_indptr_and_stable_flag"]))
             print('\t Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
     else:
+        print("Entering normal training mode...")
         # for i, rows in df[:train_edge_end].groupby(group_indexes[random.randint(0, len(group_indexes) - 1)]):
         for i, rows in df[:train_edge_end].groupby(group_idx):
             ########################################
@@ -1487,12 +1489,12 @@ for e in range(train_param['epoch']):
     # batch_latency.append(time_tot)
 
     if args.profile_to_dgl_blocks:
-            input("END OF EPOCH - Press Enter to see to_dgl_blocks profile...")
+            input("\tEND OF EPOCH - Press Enter to see to_dgl_blocks profile...")
             print_to_dgl_blocks_profile()
             tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
             print(tmp_to_dgl_blocks_profile)
-            print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
-            # reset_to_dgl_blocks_profile()
+            print("\tCaptured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            reset_to_dgl_blocks_profile()
     
 
 
