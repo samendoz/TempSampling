@@ -1462,13 +1462,16 @@ for e in range(train_param['epoch']):
         print("max max", np.max(moving_node_usage_stats["max"][:-1]), "min max", np.min(moving_node_usage_stats["max"][:-1]), "mean max", np.mean(moving_node_usage_stats["max"][:-1]))
         print("exiting observing mode...")
         break
-
+    
+    eval_start_time = time.time()
     ap, auc = eval('val')
     if e > 2 and ap > best_ap:
         best_e = e
         best_ap = ap
         best_auc = auc
         torch.save(model.state_dict(), path_saver)
+    eval_end_time = time.time()
+    eval_time = eval_end_time - eval_start_time
 
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f} val loss:{:4f} ave_val loss:{:4f} final_val loss:{:4f}'.format(total_loss, ap, auc, sum(val_losses), sum(val_losses) / len(val_losses), val_losses[-1]))
     print('\ttotal time:{:.2f}s sample time:{:.2f}s prep time:{:.2f}s model time:{:.2f}s'.format(time_tot, time_sample, time_prep, time_model))
@@ -1481,7 +1484,8 @@ for e in range(train_param['epoch']):
     ))
     print('\t Initial Captured prep time ratio: {:.2f}%'.format(100 * sum(prep_time_breakdown.values()) / time_prep if time_prep > 0 else 0))
     print('\t Estimated Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
-
+    print('\t Evaluation time:{:.2f}s'.format(eval_time))
+    
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
@@ -1495,6 +1499,7 @@ for e in range(train_param['epoch']):
             print(tmp_to_dgl_blocks_profile)
             print("\tCaptured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
             reset_to_dgl_blocks_profile()
+            input("\tPress Enter to continue...")
     
 
 
