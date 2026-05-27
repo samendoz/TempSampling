@@ -941,7 +941,9 @@ for e in range(train_param['epoch']):
             print_to_dgl_blocks_profile()
             tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
             print(tmp_to_dgl_blocks_profile)
+            print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
             reset_to_dgl_blocks_profile()
+
 
 
         # batch_sizes.append(batch_count)
