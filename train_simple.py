@@ -930,6 +930,17 @@ for e in range(train_param['epoch']):
             prefetch.clear()
         if args.observing:
             print("****************node_stable_acc****************", node_stable_acc)
+        
+        if args.profile_to_dgl_blocks:
+            input("Press Enter to see to_dgl_blocks profile...")
+            print_to_dgl_blocks_profile()
+            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            print(tmp_to_dgl_blocks_profile)
+            print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            reset_to_dgl_blocks_profile()
+            input("Press Enter to continue training...")
+
+    
         print("***********************************************")
 
         if args.observing and SAVE_COUNT:
@@ -1475,13 +1486,13 @@ for e in range(train_param['epoch']):
         # print('\tstable flag flip list: ' + ' '.join('{:.6f}'.format(r) for r in flip_ratio_log))
     # batch_latency.append(time_tot)
 
-    if args.profile_to_dgl_blocks:
-            input("Press Enter to see to_dgl_blocks profile...")
-            print_to_dgl_blocks_profile()
-            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
-            print(tmp_to_dgl_blocks_profile)
-            print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
-            reset_to_dgl_blocks_profile()
+    #if args.profile_to_dgl_blocks:
+    #        input("Press Enter to see to_dgl_blocks profile...")
+    #        print_to_dgl_blocks_profile()
+    #        tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+    #        print(tmp_to_dgl_blocks_profile)
+    #        print("\t Captured to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+    #        reset_to_dgl_blocks_profile()
     
 
 
