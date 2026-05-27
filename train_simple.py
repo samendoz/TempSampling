@@ -936,6 +936,13 @@ for e in range(train_param['epoch']):
             batch_max_color_counts = np.array(batch_max_color_counts)
             batch_max_color_counts_total[e] = batch_max_color_counts
 
+        if args.profile_to_dgl_blocks:
+            input("Press Enter to see to_dgl_blocks profile...")
+            print_to_dgl_blocks_profile()
+            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            print(tmp_to_dgl_blocks_profile)
+            reset_to_dgl_blocks_profile()
+
 
         # batch_sizes.append(batch_count)
     elif args.mode == 'observing':
@@ -1470,12 +1477,6 @@ for e in range(train_param['epoch']):
     print('\t Initial Captured prep time ratio: {:.2f}%'.format(100 * sum(prep_time_breakdown.values()) / time_prep if time_prep > 0 else 0))
     print('\t Estimated Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
 
-    if args.profile_to_dgl_blocks:
-        input("Press Enter to see to_dgl_blocks profile...")
-        print_to_dgl_blocks_profile()
-        tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
-        print(tmp_to_dgl_blocks_profile)
-        reset_to_dgl_blocks_profile()
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
