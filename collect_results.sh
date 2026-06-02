@@ -79,8 +79,8 @@ timing_re     = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep
 best_re       = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
 flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]+).*?min:([\d.]+).*?max:([\d.]+).*?batches:(\d+)')
 flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
-prep_re       = re.compile(r'prep time details: to_dgl_blocks:([\d.]+)s prepare_input:([\d.]+)s mailbox_prep:([\d.]+)s mailbox_update:([\d.]+)s batch_postprocessing:([\d.]+)s')
-dgl_profile_re    = re.compile(r'create_block_time: ([\d.]+)s cuda_copy_time: ([\d.]+)s total_to_dgl_blocks_time: ([\d.]+)s')
+dgl_profile_re    = re.compile(r'create_block_time: ([\d.]+)s cuda_copy_time: ([\d.]+)s total_to_dgl_blocks_time: ([\d.]+)s combine_first_time: ([\d.]+)s node_index_time: ([\d.]+)s edge_index_time: ([\d.]+)s node_cuda_time: ([\d.]+)s edge_cuda_time: ([\d.]+)s')
+mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update Index Time: ([\d.]+)s Mailbox Update Deduplication Time: ([\d.]+)s Mailbox Update Write Time: ([\d.]+)s')
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
 estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s')
 
@@ -123,20 +123,27 @@ with open(log_path) as f:
             for batch_idx, val in enumerate(m.group(1).split()):
                 flip_dist_rows.append({'epoch': epoch, 'batch': batch_idx, 'flip_ratio': val})
             continue
-        m = prep_re.search(line)
-        if m and current is not None:
-            current.update({
-                'prep_to_dgl_blocks': m.group(1),
-                'prep_prepare_input': m.group(2),
-                'prep_mailbox_prep': m.group(3),
-                'prep_mailbox_update': m.group(4),
-                'prep_batch_postprocessing': m.group(5),
-            })
-            continue
+        # m = prep_re.search(line)
+        # if m and current is not None:
+        #     current.update({
+        #         'prep_to_dgl_blocks': m.group(1),
+        #         'prep_prepare_input': m.group(2),
+        #         'prep_mailbox_prep': m.group(3),
+        #         'prep_mailbox_update': m.group(4),
+        #         'prep_batch_postprocessing': m.group(5),
+        #     })
+        #     continue
         m = dgl_profile_re.search(line)
         if m and current is not None:
             current.update({'create_block_time': m.group(1), 'cuda_copy_time': m.group(2),
-                            'total_to_dgl_blocks_time': m.group(3)})
+                            'total_to_dgl_blocks_time': m.group(3), 'combine_first_time': m.group(4),
+                            'node_index_time': m.group(5), 'edge_index_time': m.group(6),
+                            'node_cuda_time': m.group(7), 'edge_cuda_time': m.group(8)})
+            continue
+        m = mailbox_profile_re.search(line)
+        if m and current is not None:
+            current.update({'mailbox_index_time': m.group(1), 'mailbox_up_index_time': m.group(2),
+                            'mailbox_up_dedup_time': m.group(3), 'mailbox_up_write_time': m.group(4)})
             continue
         m = best_re.search(line)
         if m:
@@ -168,8 +175,9 @@ if not rows:
 
 fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'time_total', 'time_sample', 'time_prep', 'time_model',
-              'prep_to_dgl_blocks', 'prep_prepare_input', 'prep_mailbox_prep', 'prep_mailbox_update', 'prep_batch_postprocessing',
-              'create_block_time', 'cuda_copy_time', 'total_to_dgl_blocks_time',
+              # 'prep_to_dgl_blocks', 'prep_prepare_input', 'prep_mailbox_prep', 'prep_mailbox_update', 'prep_batch_postprocessing',
+              'create_block_time', 'cuda_copy_time', 'total_to_dgl_blocks_time', 'combine_first_time', 'node_index_time', 'edge_index_time', 'node_cuda_time', 'edge_cuda_time',
+              'mailbox_index_time', 'mailbox_up_index_time', 'mailbox_up_dedup_time', 'mailbox_up_write_time',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
               'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time',
               'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_updating_indptr_and_stable_flag']
