@@ -271,8 +271,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 # Synchronize to get accurate CUDA time measurement
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                    node_cuda_time = time.time() - cuda_start_time
-                    total_node_cuda_time += node_cuda_time
+                node_cuda_time = time.time() - cuda_start_time
+                total_node_cuda_time += node_cuda_time
 
             else:
                 idx_time_start = time.time()
@@ -288,8 +288,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
 
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                    node_cuda_time = time.time() - cuda_start_time
-                    total_node_cuda_time += node_cuda_time
+                node_cuda_time = time.time() - cuda_start_time
+                total_node_cuda_time += node_cuda_time
 
     # 3rd step: prepare edge features
     i = 0
@@ -319,8 +319,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
 
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
-                            edge_cuda_time = time.time() - cuda_start_time
-                            total_edge_cuda_time += edge_cuda_time
+                        edge_cuda_time = time.time() - cuda_start_time
+                        total_edge_cuda_time += edge_cuda_time
                     else:
                         # edge_feats_device = edge_feats.device
                         idx_time_start = time.time()
@@ -334,8 +334,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         b.edata['f'] = srch.cuda()
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
-                            edge_cuda_time = time.time() - cuda_start_time
-                            total_edge_cuda_time += edge_cuda_time
+                        edge_cuda_time = time.time() - cuda_start_time
+                        total_edge_cuda_time += edge_cuda_time
 
     if profile:
         TO_DGL_BLOCKS_PROFILE_SUMMARY['combine_first_time'] += combine_first_time if combine_first else 0.0
