@@ -22,7 +22,10 @@ MAILBOX_PREP_PROFILE_SUMMARY = {
     'mailbox_index_time': 0.0,
     'mailbox_up_index_time': 0.0,
     'mailbox_up_dedup_time': 0.0,
-    'mailbox_up_write_time': 0.0
+    'mailbox_up_write_time': 0.0,
+    'mem_stab_prep_time': 0.0,
+    'mem_stab_math_time': 0.0,
+    'mem_stab_write_time': 0.0,
 }
 
 def set_mailbox_prep_profile(enabled=True):
@@ -43,9 +46,13 @@ def print_mailbox_prep_profile():
     mailbox_up_index_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_index_time']
     mailbox_up_dedup_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_dedup_time']
     mailbox_up_write_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_write_time']
+    mem_stab_prep_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_prep_time']
+    mem_stab_math_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_math_time']
+    mem_stab_write_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_write_time']
 
     print("Mailbox Prep Profile Summary:")
-    print("\tMailbox Index Time: {:.6f}s Mailbox Update Index Time: {:.6f}s Mailbox Update Deduplication Time: {:.6f}s Mailbox Update Write Time: {:.6f}s".format(mailbox_index_time, mailbox_up_index_time, mailbox_up_dedup_time, mailbox_up_write_time))
+    print("\tMailbox Index Time: {:.6f}s Mailbox Update Index Time: {:.6f}s Mailbox Update Deduplication Time: {:.6f}s Mailbox Update Write Time: {:.6f}s Memory Stability Prep Time: {:.6f}s Memory Stability Math Time: {:.6f}s Memory Stability Write Time: {:.6f}s".format(
+        mailbox_index_time, mailbox_up_index_time, mailbox_up_dedup_time, mailbox_up_write_time, mem_stab_prep_time, mem_stab_math_time, mem_stab_write_time))
 
 def enable_profiling():
     global PROFILE
@@ -378,13 +385,25 @@ class MailBox():
         return self.node_stable_flag[:,-1].cpu()
 
     def update_memory_and_check_stablizing(self, nid, memory, root_nodes, ts, neg_samples=1, threshold=0.9, any=True):
+
+        global MAILBOX_PREP_PROFILE_SUMMARY
+        profile = MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
+
         if nid is None:
             return
         num_true_src_dst = root_nodes.shape[0] // (neg_samples + 2) * 2
         with torch.no_grad():
+
+            # Phase 1 Slice and transfer
+            time_prep_start = time.time()
+
             nid = nid[:num_true_src_dst].to(self.device).long()
             memory = memory[:num_true_src_dst].to(self.device)
-            ts = ts[:num_true_src_dst].to(self.device)
+            ts = ts[:num_true_src_dst].to(self.device)´
+
+            time_prep = time.time() - time_prep_start
+            time_math_start = time.time()
+
             similarity = self.similarity(memory, self.node_memory[nid])
             node_stable = similarity > threshold
             if self.histroy_window_size > 2:
@@ -392,9 +411,19 @@ class MailBox():
                 self.node_stable_flag[nid, :-1] = self.node_stable_flag[nid, 1:]
             self.node_stable_flag[nid, -1] = node_stable
 
+            time_math = time.time() - time_math_start
+            time_write_start = time.time()
+
             self.node_memory[nid] = memory
             self.node_memory_ts[nid] = ts
             collect_profile(nid, memory, self.node_memory)
+
+            time_write = time.time() - time_write_start
+
+            if profile:
+                MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_prep_time'] += time_prep
+                MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_math_time'] += time_math
+                MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_write_time'] += time_write
 
     def get_node_stable_flag(self, nid, window_size=2, any=True):
 
