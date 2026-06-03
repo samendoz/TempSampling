@@ -399,7 +399,7 @@ class MailBox():
 
             nid = nid[:num_true_src_dst].to(self.device).long()
             memory = memory[:num_true_src_dst].to(self.device)
-            ts = ts[:num_true_src_dst].to(self.device)´
+            ts = ts[:num_true_src_dst].to(self.device)
 
             time_prep = time.time() - time_prep_start
             time_math_start = time.time()
