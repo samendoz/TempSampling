@@ -249,6 +249,9 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
     t_idx = 0
     t_cuda = 0
     i = 0
+
+    total_node_idx_time = 0.0
+    total_node_cuda_time = 0.0
     if node_feats is not None:
         for b in mfgs[0]:
             if pinned:
@@ -259,6 +262,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                     idx = b.srcdata['ID'].cpu().long()
                 torch.index_select(node_feats, 0, idx, out=nfeat_buffs[i][:idx.shape[0]])
                 node_idx_time = time.time() - idx_time_start
+                total_node_idx_time += node_idx_time
 
                 cuda_start_time = time.time()
                 b.srcdata['h'] = nfeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
@@ -268,12 +272,14 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                     node_cuda_time = time.time() - cuda_start_time
+                    total_node_cuda_time += node_cuda_time
 
             else:
                 idx_time_start = time.time()
                 idx = b.srcdata['ID'].long().to(node_feats.device)
                 srch = node_feats[idx].float()
                 node_idx_time = time.time() - idx_time_start
+                total_node_idx_time += node_idx_time
                 # srch = node_feats[b.srcdata['ID'].long()].float()
                 # print("index device: ", b.srcdata['ID'].device, "node_feats device: ", node_feats.device)
                 # print("srch shape: ", srch.shape, "device: ", srch.device)
@@ -283,9 +289,13 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                     node_cuda_time = time.time() - cuda_start_time
+                    total_node_cuda_time += node_cuda_time
 
     # 3rd step: prepare edge features
     i = 0
+    total_edge_idx_time = 0.0
+    total_edge_cuda_time = 0.0
+
     if edge_feats is not None:
         for mfg in mfgs:
             for b in mfg:
@@ -301,6 +311,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
                         
                         edge_idx_time = time.time() - idx_time_start
+                        total_edge_idx_time += edge_idx_time
                         cuda_start_time = time.time()
 
                         b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
@@ -309,6 +320,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
                             edge_cuda_time = time.time() - cuda_start_time
+                            total_edge_cuda_time += edge_cuda_time
                     else:
                         # edge_feats_device = edge_feats.device
                         idx_time_start = time.time()
@@ -316,19 +328,21 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         srch = edge_feats[idx].float()
 
                         edge_idx_time = time.time() - idx_time_start
+                        total_edge_idx_time += edge_idx_time
                         cuda_start_time = time.time()
                         # srch = edge_feats[b.edata['ID'].long()].float()
                         b.edata['f'] = srch.cuda()
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
                             edge_cuda_time = time.time() - cuda_start_time
-    
+                            total_edge_cuda_time += edge_cuda_time
+
     if profile:
         TO_DGL_BLOCKS_PROFILE_SUMMARY['combine_first_time'] += combine_first_time if combine_first else 0.0
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['node_index_time'] += node_idx_time if node_feats is not None else 0.0
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_index_time'] += edge_idx_time if edge_feats is not None else 0.0
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['node_cuda_time'] += node_cuda_time if node_feats is not None else 0.0
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_cuda_time'] += edge_cuda_time if edge_feats is not None else 0.0
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['node_index_time'] += total_node_idx_time if node_feats is not None else 0.0
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_index_time'] += total_edge_idx_time if edge_feats is not None else 0.0
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['node_cuda_time'] += total_node_cuda_time if node_feats is not None else 0.0
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_cuda_time'] += total_edge_cuda_time if edge_feats is not None else 0.0
 
     return mfgs
 
