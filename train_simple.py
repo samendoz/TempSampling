@@ -951,6 +951,9 @@ for e in range(train_param['epoch']):
             print_mailbox_prep_profile()
             print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * tmp_mailbox_prep_profile['mailbox_index_time'] / 
                                                                     estimated_prep_times["mailbox_prep"] if estimated_prep_times["mailbox_prep"] > 0 else 0))
+            print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
+                                                                          tmp_mailbox_prep_profile["mailbox_up_dedup_time"] + 
+                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] ) / estimated_prep_times["mailbox_update"] if estimated_prep_times["mailbox_update"] > 0 else 0))
             # reset_to_dgl_blocks_profile()
             # input("Press Enter to continue training...")
 
