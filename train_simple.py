@@ -1514,11 +1514,28 @@ for e in range(train_param['epoch']):
     # batch_latency.append(time_tot)
 
     if args.profile_to_dgl_blocks:
-            # input("\tEND OF EPOCH - Press Enter to see to_dgl_blocks profile...")
-            # print_to_dgl_blocks_profile()
-            # tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            tmp_mailbox_prep_profile = get_mailbox_prep_profile_summary()
+            print_to_dgl_blocks_profile()
             # print(tmp_to_dgl_blocks_profile)
-            #print("\tCaptured Epoch to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            print("\tCaptured Training Loop to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / 
+                                                                                estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
+            print("\tCaptured Prepare Input time: {:.2f}%".format(100 * (tmp_to_dgl_blocks_profile['combine_first_time'] + 
+                                                                         tmp_to_dgl_blocks_profile['node_index_time'] +
+                                                                         tmp_to_dgl_blocks_profile['edge_index_time'] + 
+                                                                         tmp_to_dgl_blocks_profile['node_cuda_time'] +
+                                                                         tmp_to_dgl_blocks_profile['edge_cuda_time']
+                                                                         ) / estimated_prep_times["prepare_input"] if estimated_prep_times["prepare_input"] > 0 else 0))
+            print_mailbox_prep_profile()
+            print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * tmp_mailbox_prep_profile['mailbox_index_time'] / 
+                                                                    estimated_prep_times["mailbox_prep"] if estimated_prep_times["mailbox_prep"] > 0 else 0))
+            print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
+                                                                          tmp_mailbox_prep_profile["mailbox_up_dedup_time"] + 
+                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] + 
+                                                                          tmp_mailbox_prep_profile["mem_stab_prep_time"] +
+                                                                          tmp_mailbox_prep_profile["mem_stab_math_time"] +
+                                                                          tmp_mailbox_prep_profile["mem_stab_write_time"]
+                                                                         ) / estimated_prep_times["mailbox_update"] if estimated_prep_times["mailbox_update"] > 0 else 0))
             reset_to_dgl_blocks_profile()
             reset_mailbox_prep_profile()
             # input("\tPress Enter to continue...")
