@@ -142,15 +142,15 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
 
             src_id_start_time = time.time()
             b.srcdata['ID'] = torch.from_numpy(r.nodes())
-            src_id_time = time.time() - start - src_id_start_time
+            src_id_time = time.time() - src_id_start_time
 
             edge_dt_start_time = time.time()
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
-            edge_dt_time = time.time() - start - edge_dt_start_time
+            edge_dt_time = time.time() - edge_dt_start_time
 
             src_ts_start_time = time.time()
             b.srcdata['ts'] = torch.from_numpy(r.ts())
-            src_ts_time = time.time() - start - src_ts_start_time
+            src_ts_time = time.time() - src_ts_start_time
 
         else:
 
@@ -159,19 +159,19 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
 
             src_id_start_time = time.time()
             b.dstdata['ID'] = torch.from_numpy(r.nodes())
-            src_id_time = time.time() - start - src_id_start_time
+            src_id_time = time.time() - src_id_start_time
 
             edge_dt_start_time = time.time()
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
-            edge_dt_time = time.time() - start - edge_dt_start_time
+            edge_dt_time = time.time() - edge_dt_start_time
 
             src_ts_start_time = time.time()
             b.dstdata['ts'] = torch.from_numpy(r.ts())
-            src_ts_time = time.time() - start - src_ts_start_time
+            src_ts_time = time.time() - src_ts_start_time
 
         id_time_start = time.time()
         b.edata['ID'] = torch.from_numpy(r.eid())
-        id_time = time.time() - start - id_time_start
+        id_time = time.time() - id_time_start
 
         create_block_end_time = time.time()
 
@@ -243,11 +243,11 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
 
     src_id_start_time = time.time()
     b.srcdata['ID'] = torch.from_numpy(root_nodes)
-    src_id_time = time.time() - start - src_id_start_time
+    src_id_time = time.time() - src_id_start_time
 
     edge_dt_start_time = time.time()
     b.edata['dt'] = torch.from_numpy(ts)
-    edge_dt_time = time.time() - start - edge_dt_start_time
+    edge_dt_time = time.time() - edge_dt_start_time
 
     create_block_end_time = time.time()
 
