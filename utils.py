@@ -321,7 +321,12 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 total_node_idx_time += node_idx_time
 
                 cuda_start_time = time.time()
-                b.srcdata['h'] = nfeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+
+                #Fix to Run GDELT on CPU
+                target_device = b.device
+                is_cuda = (target_device.type == 'cuda')
+                #b.srcdata['h'] = nfeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                b.srcdata['h'] = nfeat_buffs[i][:idx.shape[0]].to(target_device, non_blocking=is_cuda)
                 i += 1
 
                 # Synchronize to get accurate CUDA time measurement
@@ -339,8 +344,13 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 # srch = node_feats[b.srcdata['ID'].long()].float()
                 # print("index device: ", b.srcdata['ID'].device, "node_feats device: ", node_feats.device)
                 # print("srch shape: ", srch.shape, "device: ", srch.device)
+                
+                #Fix to Run GDELT on CPU
                 cuda_start_time = time.time()
-                b.srcdata['h'] = srch.cuda()
+                target_device = b.device
+                #b.srcdata['h'] = srch.cuda()
+                b.srcdata['h'] = srch.to(target_device)
+
 
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
@@ -370,7 +380,13 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         total_edge_idx_time += edge_idx_time
                         cuda_start_time = time.time()
 
-                        b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                        #GDELT CPU fix
+                        target_device = b.device
+                        is_cuda = (target_device.type == 'cuda')
+                        #b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                        b.edata['f'] = efeat_buffs[i][:idx.shape[0]].to(target_device, non_blocking=is_cuda)
+
+
                         i += 1
 
                         if torch.cuda.is_available():
@@ -387,7 +403,12 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         total_edge_idx_time += edge_idx_time
                         cuda_start_time = time.time()
                         # srch = edge_feats[b.edata['ID'].long()].float()
-                        b.edata['f'] = srch.cuda()
+
+                        #GDELT CPU fix
+                        target_device = b.device
+                        #b.edata['f'] = srch.cuda()
+                        b.edata['f'] = srch.to(target_device)
+
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
                         edge_cuda_time = time.time() - cuda_start_time
