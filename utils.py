@@ -191,6 +191,12 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
             TO_DGL_BLOCKS_PROFILE_SUMMARY['create_block_time'] += (create_block_end_time - start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['create_dgl_block_time'] += create_dgl_block_time
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += src_id_time
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += edge_dt_time
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_ts_time'] += src_ts_time
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['id_time'] += id_time
+
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
     mfgs.reverse()
     return mfgs
@@ -234,8 +240,14 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     start = time.time()
     
     b = dgl.create_block(([],[]), num_src_nodes=root_nodes.shape[0], num_dst_nodes=root_nodes.shape[0])
+
+    src_id_start_time = time.time()
     b.srcdata['ID'] = torch.from_numpy(root_nodes)
-    b.srcdata['ts'] = torch.from_numpy(ts)
+    src_id_time = time.time() - start - src_id_start_time
+
+    edge_dt_start_time = time.time()
+    b.edata['dt'] = torch.from_numpy(ts)
+    edge_dt_time = time.time() - start - edge_dt_start_time
 
     create_block_end_time = time.time()
 
@@ -252,7 +264,9 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
         TO_DGL_BLOCKS_PROFILE_SUMMARY['create_block_time'] += (create_block_end_time - start)
         TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
         TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
-    
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += src_id_time
+        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += edge_dt_time
+
     return mfgs
 
 def mfgs_to_cuda(mfgs):
