@@ -18,6 +18,11 @@ TO_DGL_BLOCKS_PROFILE_SUMMARY = {
     'edge_index_time': 0.0,
     'node_cuda_time': 0.0,
     'edge_cuda_time': 0.0,
+    'create_dgl_block_time': 0.0,
+    'src_id_time': 0.0,
+    'edge_dt_time': 0.0,
+    'src_ts_time': 0.0,
+    'id_time': 0.0,
 }
 
 def set_to_dgl_blocks_profiling(enabled=True):
@@ -37,6 +42,11 @@ def reset_to_dgl_blocks_profile():
         'edge_index_time': 0.0,
         'node_cuda_time': 0.0,
         'edge_cuda_time': 0.0,
+        'create_dgl_block_time': 0.0,
+        'src_id_time': 0.0,
+        'edge_dt_time': 0.0,
+        'src_ts_time': 0.0,
+        'id_time': 0.0,
     }
 
 
@@ -50,10 +60,15 @@ def print_to_dgl_blocks_profile():
     edge_index_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_index_time']
     node_cuda_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['node_cuda_time']
     edge_cuda_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_cuda_time']
+    create_dgl_block_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['create_dgl_block_time']
+    src_id_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time']
+    edge_dt_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time']
+    src_ts_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['src_ts_time']
+    id_time = TO_DGL_BLOCKS_PROFILE_SUMMARY['id_time']
 
     print('\t=== to_dgl_blocks profiling summary ===')
     print('\tblocks created: {:d}'.format(count))
-    print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s combine_first_time: {:.6f}s node_index_time: {:.6f}s edge_index_time: {:.6f}s node_cuda_time: {:.6f}s edge_cuda_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time, combine_first_time, node_index_time, edge_index_time, node_cuda_time, edge_cuda_time))
+    print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s combine_first_time: {:.6f}s node_index_time: {:.6f}s edge_index_time: {:.6f}s node_cuda_time: {:.6f}s edge_cuda_time: {:.6f}s create_dgl_block_time: {:.6f}s src_id_time: {:.6f}s edge_dt_time: {:.6f}s src_ts_time: {:.6f}s id_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time, combine_first_time, node_index_time, edge_index_time, node_cuda_time, edge_cuda_time, create_dgl_block_time, src_id_time, edge_dt_time, src_ts_time, id_time))
 
 
 def get_to_dgl_blocks_profile_summary():
@@ -121,16 +136,43 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
     for r in ret:
         start = time.time()
         if not reverse:
+            #further break down
             b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
+            create_dgl_block_time = time.time() - start
+
+            src_id_start_time = time.time()
             b.srcdata['ID'] = torch.from_numpy(r.nodes())
+            src_id_time = time.time() - start - src_id_start_time
+
+            edge_dt_start_time = time.time()
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
+            edge_dt_time = time.time() - start - edge_dt_start_time
+
+            src_ts_start_time = time.time()
             b.srcdata['ts'] = torch.from_numpy(r.ts())
+            src_ts_time = time.time() - start - src_ts_start_time
+
         else:
+
             b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
+            create_dgl_block_time = time.time() - start
+
+            src_id_start_time = time.time()
             b.dstdata['ID'] = torch.from_numpy(r.nodes())
+            src_id_time = time.time() - start - src_id_start_time
+
+            edge_dt_start_time = time.time()
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
+            edge_dt_time = time.time() - start - edge_dt_start_time
+
+            src_ts_start_time = time.time()
             b.dstdata['ts'] = torch.from_numpy(r.ts())
+            src_ts_time = time.time() - start - src_ts_start_time
+
+        id_time_start = time.time()
         b.edata['ID'] = torch.from_numpy(r.eid())
+        id_time = time.time() - start - id_time_start
+
         create_block_end_time = time.time()
 
         cuda_start = time.time()
