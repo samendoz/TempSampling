@@ -116,6 +116,9 @@ def set_seed(seed):
 print("setting seed...")
 set_seed(0)
 
+# AGGRESSIVE PROFILING FLAG (WAIT FOR GPU OPERATIONS TO BE FINISHED)
+AGGRESSIVE_PROFILING = True
+
 if args.profile_to_dgl_blocks:
     print("[INFO] Enabling fine-grained to_dgl_blocks profiling")
     set_to_dgl_blocks_profiling(True, AGGRESSIVE_PROFILING)
@@ -245,9 +248,6 @@ if 'all_on_gpu' in train_param and train_param['all_on_gpu']:
     if mailbox is not None:
         mailbox.move_to_gpu()
     ALL_GPU = True
-
-# AGGRESSIVE PROFILING FLAG (WAIT FOR GPU OPERATIONS TO BE FINISHED)
-AGGRESIVE_PROFILING = True
 
 print("check memory usage after creating model...")
 check_memory_usage()
