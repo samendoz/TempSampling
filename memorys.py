@@ -28,9 +28,12 @@ MAILBOX_PREP_PROFILE_SUMMARY = {
     'mem_stab_write_time': 0.0,
 }
 
-def set_mailbox_prep_profile(enabled=True):
+def set_mailbox_prep_profile(enabled=True, aggresive_profiling=False):
     global MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
     MAILBOX_PREP_PROFILE_SUMMARY_PROFILE = enabled
+    global AGGREGATIVE_PROFILING
+    AGGREGATIVE_PROFILING = aggresive_profiling
+
 
 def reset_mailbox_prep_profile():
     global MAILBOX_PREP_PROFILE_SUMMARY
