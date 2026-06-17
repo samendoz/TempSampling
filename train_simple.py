@@ -928,7 +928,6 @@ for e in range(train_param['epoch']):
             estimated_prep_times["update_memory_and_check_stablizing"], 
             estimated_prep_times["updating_indptr_and_stable_flag"]
         ))
-        print('\tCaptured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
         if prefetch is not None:
             print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
             prefetch.clear()
