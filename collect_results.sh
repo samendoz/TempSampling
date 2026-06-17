@@ -81,8 +81,8 @@ flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]
 flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
 # print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s combine_first_time: {:.6f}s node_index_time: {:.6f}s edge_index_time: {:.6f}s node_cuda_time: {:.6f}s edge_cuda_time: {:.6f}s create_dgl_block_time: {:.6f}s src_id_time: {:.6f}s edge_dt_time: {:.6f}s src_ts_time: {:.6f}s id_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time, combine_first_time, node_index_time, edge_index_time, node_cuda_time, edge_cuda_time, create_dgl_block_time, src_id_time, edge_dt_time, src_ts_time, id_time))
 dgl_profile_re    = re.compile(r'create_block_time: ([\d.]+)s cuda_copy_time: ([\d.]+)s total_to_dgl_blocks_time: ([\d.]+)s combine_first_time: ([\d.]+)s node_index_time: ([\d.]+)s edge_index_time: ([\d.]+)s node_cuda_time: ([\d.]+)s edge_cuda_time: ([\d.]+)s create_dgl_block_time: ([\d.]+)s src_id_time: ([\d.]+)s edge_dt_time: ([\d.]+)s src_ts_time: ([\d.]+)s id_time: ([\d.]+)s')
-# Mailbox Index Time: 0.002116s Mailbox Update Index Time: 0.007210s Mailbox Update Deduplication Time: 0.005352s Mailbox Update Write Time: 0.002401s Memory Stability Prep Time: 0.000735s Memory Stability Math Time: 0.003773s Memory Stability Write Time: 0.000503s
-mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update Index Time: ([\d.]+)s Mailbox Update Deduplication Time: ([\d.]+)s Mailbox Update Write Time: ([\d.]+)s Memory Stability Prep Time: ([\d.]+)s Memory Stability Math Time: ([\d.]+)s Memory Stability Write Time: ([\d.]+)s')
+#Mailbox Index Time: 0.000000s Mailbox Update Index Time: 0.008704s Mailbox Update Deduplication Time: 0.014092s Mailbox Update Write Time: 0.002922s Mailbox Update CPU Time: 0.004289s Mailbox Update CUDA Time: 0.013039s Memory Stability Prep Time: 0.001197s Memory Stability Math Time: 0.038048s Memory Stability Write Time: 0.000532s 
+mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update Index Time: ([\d.]+)s Mailbox Update Deduplication Time: ([\d.]+)s Mailbox Update Write Time: ([\d.]+)s Mailbox Update CPU Time: ([\d.]+)s Mailbox Update CUDA Time: ([\d.]+)s Memory Stability Prep Time: ([\d.]+)s Memory Stability Math Time: ([\d.]+)s Memory Stability Write Time: ([\d.]+)s')
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
 estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s')
 
@@ -147,9 +147,10 @@ with open(log_path) as f:
         m = mailbox_profile_re.search(line)
         if m and current is not None:
             current.update({'mailbox_index_time': m.group(1), 'mailbox_up_index_time': m.group(2),
-                            'mailbox_up_dedup_time': m.group(3), 'mailbox_up_write_time': m.group(4),
-                            'mem_stab_prep_time': m.group(5), 'mem_stab_math_time': m.group(6),
-                            'mem_stab_write_time': m.group(7)})
+                            'mailbox_up_dedup_time': m.group(3), 'mailbox_up_write_time': m.group(4), 
+                            'mailbox_up_cpu_time': m.group(5), 'mailbox_up_cuda_time': m.group(6),
+                            'mem_stab_prep_time': m.group(6), 'mem_stab_math_time': m.group(7),
+                            'mem_stab_write_time': m.group(8)})
             continue
         m = best_re.search(line)
         if m:
