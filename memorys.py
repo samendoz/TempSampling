@@ -400,14 +400,15 @@ class MailBox():
             else:
                 # print("node memory device", self.node_memory.device, "b.srcdata device", b.srcdata['ID'].device)
                 # move index to the device of the node memory and mailbox---this is for no-all-gpu case
+                print("\t Else in mailbox prep")
                 time_cuda_start = perf_counter()
                 device = self.node_memory.device
-                idx = b.srcdata['ID'].long().to(device)
+                idx = b.srcdata['ID'].long()
 
-                b.srcdata['mem'] = self.node_memory[idx].cuda()
-                b.srcdata['mem_ts'] = self.node_memory_ts[idx].cuda()
-                b.srcdata['mem_input'] = self.mailbox[idx].cuda().reshape(b.srcdata['ID'].shape[0], -1)
-                b.srcdata['mail_ts'] = self.mailbox_ts[idx].cuda()
+                b.srcdata['mem'] = self.node_memory[idx]
+                b.srcdata['mem_ts'] = self.node_memory_ts[idx]
+                b.srcdata['mem_input'] = self.mailbox[idx].reshape(b.srcdata['ID'].shape[0], -1)
+                b.srcdata['mail_ts'] = self.mailbox_ts[idx]
 
                 if aggressive_profiling:
                     torch.cuda.synchronize()
