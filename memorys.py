@@ -3,6 +3,7 @@ import dgl
 from layers import TimeEncode
 from torch_scatter import scatter
 import time
+from time import perf_counter
 
 # profile functions
 PROFILE = False
@@ -20,9 +21,12 @@ cos_sim = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 MAILBOX_PREP_PROFILE_SUMMARY_PROFILE = False
 MAILBOX_PREP_PROFILE_SUMMARY = {
     'mailbox_index_time': 0.0,
+    'mailbox_cuda_time': 0.0,
     'mailbox_up_index_time': 0.0,
     'mailbox_up_dedup_time': 0.0,
     'mailbox_up_write_time': 0.0,
+    'mailbox_up_cpu_time': 0.0,
+    'mailbox_up_cuda_time': 0.0,
     'mem_stab_prep_time': 0.0,
     'mem_stab_math_time': 0.0,
     'mem_stab_write_time': 0.0,
@@ -31,8 +35,8 @@ MAILBOX_PREP_PROFILE_SUMMARY = {
 def set_mailbox_prep_profile(enabled=True, aggresive_profiling=False):
     global MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
     MAILBOX_PREP_PROFILE_SUMMARY_PROFILE = enabled
-    global AGGREGATIVE_PROFILING
-    AGGREGATIVE_PROFILING = aggresive_profiling
+    global AGGRESSIVE_PROFILING
+    AGGRESSIVE_PROFILING = aggresive_profiling
 
 
 def reset_mailbox_prep_profile():
@@ -49,13 +53,15 @@ def print_mailbox_prep_profile():
     mailbox_up_index_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_index_time']
     mailbox_up_dedup_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_dedup_time']
     mailbox_up_write_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_write_time']
+    mailbox_up_cpu_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cpu_time']
+    mailbox_up_cuda_time = MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cuda_time']
     mem_stab_prep_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_prep_time']
     mem_stab_math_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_math_time']
     mem_stab_write_time = MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_write_time']
 
     print("Mailbox Prep Profile Summary:")
-    print("\tMailbox Index Time: {:.6f}s Mailbox Update Index Time: {:.6f}s Mailbox Update Deduplication Time: {:.6f}s Mailbox Update Write Time: {:.6f}s Memory Stability Prep Time: {:.6f}s Memory Stability Math Time: {:.6f}s Memory Stability Write Time: {:.6f}s".format(
-        mailbox_index_time, mailbox_up_index_time, mailbox_up_dedup_time, mailbox_up_write_time, mem_stab_prep_time, mem_stab_math_time, mem_stab_write_time))
+    print("\tMailbox Index Time: {:.6f}s Mailbox Update Index Time: {:.6f}s Mailbox Update Deduplication Time: {:.6f}s Mailbox Update Write Time: {:.6f}s Mailbox Update CPU Time: {:.6f}s Mailbox Update CUDA Time: {:.6f}s Memory Stability Prep Time: {:.6f}s Memory Stability Math Time: {:.6f}s Memory Stability Write Time: {:.6f}s".format(
+        mailbox_index_time, mailbox_up_index_time, mailbox_up_dedup_time, mailbox_up_write_time, mailbox_up_cpu_time, mailbox_up_cuda_time, mem_stab_prep_time, mem_stab_math_time, mem_stab_write_time))
 
 def enable_profiling():
     global PROFILE
@@ -323,46 +329,78 @@ class MailBox():
     def prep_input_mails(self, mfg, use_pinned_buffers=False):
         global MAILBOX_PREP_PROFILE_SUMMARY
         profile = MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
+        aggressive_profiling = AGGRESSIVE_PROFILING
 
         for i, b in enumerate(mfg):
             if use_pinned_buffers:
 
-                time_idx_start = time.time()
+                time_idx_start = perf_counter()
                 idx = b.srcdata['ID'].cpu().long()
                 torch.index_select(self.node_memory, 0, idx, out=self.pinned_node_memory_buffs[i][:idx.shape[0]])
-                time_idx = time.time() - time_idx_start
+                time_idx_end = perf_counter()
+                time_idx = time_idx_end - time_idx_start
 
+                time_cuda_start = perf_counter()
                 b.srcdata['mem'] = self.pinned_node_memory_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                time_cuda_end = perf_counter()
+                time_cuda = time_cuda_end - time_cuda_start
                 
-                time_idx_start = time.time()
+                time_idx_start = perf_counter()
+                idx = b.srcdata['ID'].cpu().long()
                 torch.index_select(self.node_memory_ts,0, idx, out=self.pinned_node_memory_ts_buffs[i][:idx.shape[0]])
-                time_idx += time.time() - time_idx_start
+                time_idx_end = perf_counter()
+                time_idx += time_idx_end - time_idx_start
 
+                time_cuda_start = perf_counter()
                 b.srcdata['mem_ts'] = self.pinned_node_memory_ts_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                time_cuda_end = perf_counter()
+                time_cuda += time_cuda_end - time_cuda_start
 
-                time_idx_start = time.time()
+                time_idx_start = perf_counter()
                 torch.index_select(self.mailbox, 0, idx, out=self.pinned_mailbox_buffs[i][:idx.shape[0]])
-                time_idx += time.time() - time_idx_start
+                time_idx_end = perf_counter()
+                time_idx += time_idx_end - time_idx_start
 
+                time_cuda_start = perf_counter()
                 b.srcdata['mem_input'] = self.pinned_mailbox_buffs[i][:idx.shape[0]].reshape(b.srcdata['ID'].shape[0], -1).cuda(non_blocking=True)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                time_cuda_end = perf_counter()
+                time_cuda += time_cuda_end - time_cuda_start
 
-                time_idx_start = time.time()
+                time_idx_start = perf_counter()
                 torch.index_select(self.mailbox_ts, 0, idx, out=self.pinned_mailbox_ts_buffs[i][:idx.shape[0]])
-                time_idx += time.time() - time_idx_start
+                time_idx_end = perf_counter()
+                time_idx += time_idx_end - time_idx_start
 
+                time_cuda_start = perf_counter()
                 b.srcdata['mail_ts'] = self.pinned_mailbox_ts_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                time_cuda_end = perf_counter()
+                time_cuda += time_cuda_end - time_cuda_start
+
             else:
                 # print("node memory device", self.node_memory.device, "b.srcdata device", b.srcdata['ID'].device)
                 # move index to the device of the node memory and mailbox---this is for no-all-gpu case
-                time_idx_start = time.time()
+                time_cuda_start = perf_counter()
                 device = self.node_memory.device
                 idx = b.srcdata['ID'].long().to(device)
-                time_idx = time.time() - time_idx_start
 
                 b.srcdata['mem'] = self.node_memory[idx].cuda()
                 b.srcdata['mem_ts'] = self.node_memory_ts[idx].cuda()
                 b.srcdata['mem_input'] = self.mailbox[idx].cuda().reshape(b.srcdata['ID'].shape[0], -1)
                 b.srcdata['mail_ts'] = self.mailbox_ts[idx].cuda()
+
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+
+                time_cuda_end = perf_counter()
+                time_cuda = time_cuda_end - time_cuda_start
 
                 # b.srcdata['mem'] = self.node_memory[b.srcdata['ID'].long()].cuda()
                 # b.srcdata['mem_ts'] = self.node_memory_ts[b.srcdata['ID'].long()].cuda()
@@ -370,6 +408,7 @@ class MailBox():
                 # b.srcdata['mail_ts'] = self.mailbox_ts[b.srcdata['ID'].long()].cuda()
             if profile:
                 MAILBOX_PREP_PROFILE_SUMMARY['mailbox_index_time'] += time_idx
+                MAILBOX_PREP_PROFILE_SUMMARY['mailbox_cuda_time'] += time_cuda
 
     def update_memory(self, nid, memory, root_nodes, ts, neg_samples=1):
         if nid is None:
@@ -391,6 +430,8 @@ class MailBox():
 
         global MAILBOX_PREP_PROFILE_SUMMARY
         profile = MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
+        aggressive_profiling = AGGRESSIVE_PROFILING
+
 
         if nid is None:
             return
@@ -398,30 +439,39 @@ class MailBox():
         with torch.no_grad():
 
             # Phase 1 Slice and transfer
-            time_prep_start = time.time()
-
+            time_prep_start = perf_counter()
+            time_cuda_start = perf_counter()
             nid = nid[:num_true_src_dst].to(self.device).long()
             memory = memory[:num_true_src_dst].to(self.device)
             ts = ts[:num_true_src_dst].to(self.device)
+            if aggressive_profiling:
+                    torch.cuda.synchronize()
+            time_cuda_end = perf_counter()
+            time_cuda = time_cuda_end - time_cuda_start
+            time_prep_end = perf_counter()
+            time_prep = time_prep_end - time_prep_start
 
-            time_prep = time.time() - time_prep_start
-            time_math_start = time.time()
-
+            time_math_start = perf_counter()
+            cpu_time_start = perf_counter()
             similarity = self.similarity(memory, self.node_memory[nid])
             node_stable = similarity > threshold
             if self.histroy_window_size > 2:
                 # prev_stable = self.node_stable_flag[nid]
                 self.node_stable_flag[nid, :-1] = self.node_stable_flag[nid, 1:]
             self.node_stable_flag[nid, -1] = node_stable
+            cpu_time_end = perf_counter()
+            cpu_time = cpu_time_end - cpu_time_start
+            time_math_end = perf_counter()
+            time_math = time_math_end - time_math_start
 
-            time_math = time.time() - time_math_start
-            time_write_start = time.time()
+            time_write_start = perf_counter()
 
             self.node_memory[nid] = memory
             self.node_memory_ts[nid] = ts
             collect_profile(nid, memory, self.node_memory)
+            time_write_end = perf_counter()
+            time_write = time_write_end - time_write_start
 
-            time_write = time.time() - time_write_start
 
             if profile:
                 MAILBOX_PREP_PROFILE_SUMMARY['mem_stab_prep_time'] += time_prep
@@ -588,20 +638,39 @@ class MailBox():
     def update_mailbox(self, nid, memory, root_nodes, ts, edge_feats, block, neg_samples=1):
         global MAILBOX_PREP_PROFILE_SUMMARY
         profile = MAILBOX_PREP_PROFILE_SUMMARY_PROFILE
+        aggressive_profiling = AGGRESSIVE_PROFILING
 
         with torch.no_grad():
 
-            time_mailbox_prep_start = time.time()
+            time_mailbox_prep_start = perf_counter()
             num_true_edges = root_nodes.shape[0] // (neg_samples + 2)
+
+            cuda_time_start = perf_counter()
             memory = memory.to(self.device)
             if edge_feats is not None:
                 edge_feats = edge_feats.to(self.device)
             if block is not None:
                 block = block.to(self.device)
+
+            if aggressive_profiling:
+                    torch.cuda.synchronize()
+            
+            cuda_time_end = perf_counter()
+            cuda_time = cuda_time_end - cuda_time_start
+
             # TGN/JODIE
             if self.memory_param['deliver_to'] == 'self':
+                cuda_time_start = perf_counter()
                 src = torch.from_numpy(root_nodes[:num_true_edges]).to(self.device)
                 dst = torch.from_numpy(root_nodes[num_true_edges:num_true_edges * 2]).to(self.device)
+
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+
+                cuda_time_end = perf_counter()
+                cuda_time += cuda_time_end - cuda_time_start
+
+                cpu_time_start = perf_counter()
                 mem_src = memory[:num_true_edges]
                 mem_dst = memory[num_true_edges:num_true_edges * 2]
                 if self.dim_edge_feat > 0:
@@ -612,38 +681,68 @@ class MailBox():
                     dst_mail = torch.cat([mem_dst, mem_src], dim=1)
                 mail = torch.cat([src_mail, dst_mail], dim=1).reshape(-1, src_mail.shape[1])
                 nid = torch.cat([src.unsqueeze(1), dst.unsqueeze(1)], dim=1).reshape(-1)
+                cpu_time_end = perf_counter()
+                cpu_time = cpu_time_end - cpu_time_start
+
+                cuda_time_start = perf_counter()
                 mail_ts = torch.from_numpy(ts[:num_true_edges * 2]).to(self.device)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                cuda_time_end = perf_counter()
+                cuda_time += cuda_time_end - cuda_time_start
 
-                time_mailbox_prep = time.time() - time_mailbox_prep_start
+                time_mailbox_prep_end = perf_counter()
+                time_mailbox_prep = time_mailbox_prep_end - time_mailbox_prep_start
 
-                time_dedup_start = time.time()
+                time_dedup_start = perf_counter()
 
                 if mail_ts.dtype == torch.float64:
                     import pdb; pdb.set_trace()
                 # find unique nid to update mailbox
+                cpu_time_start = perf_counter()
                 uni, inv = torch.unique(nid, return_inverse=True)
+                cpu_time_end = perf_counter()
+                cpu_time += cpu_time_end - cpu_time_start
+
+                cuda_time_start = perf_counter()
                 perm = torch.arange(inv.size(0), dtype=inv.dtype, device=inv.device)
                 perm = inv.new_empty(uni.size(0)).scatter_(0, inv, perm)
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                cuda_time_end = perf_counter()
+                cuda_time += cuda_time_end - cuda_time_start
+
+                time_cpu_start = perf_counter()
                 nid = nid[perm]
                 mail = mail[perm]
                 mail_ts = mail_ts[perm]
+                time_cpu_end = perf_counter()
+                time_cpu = time_cpu_end - time_cpu_start
 
-                time_dedup = time.time() - time_dedup_start
-                time_write_start = time.time()
+                time_dedup_end = perf_counter()
+                time_dedup = time_dedup_end - time_dedup_start
+                time_write_start = perf_counter()
 
+                time_cpu_start = perf_counter()
                 if self.memory_param['mail_combine'] == 'last':
                     self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
                     self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
                     if self.memory_param['mailbox_size'] > 1:
                         self.next_mail_pos[nid.long()] = torch.remainder(self.next_mail_pos[nid.long()] + 1, self.memory_param['mailbox_size'])
-                time_write = time.time() - time_write_start
+                time_cpu_end = perf_counter()
+                time_cpu += time_cpu_end - time_cpu_start
+                time_write_end = perf_counter()
+                time_write = time_write_end - time_write_start
 
                 if profile:
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_index_time'] += time_mailbox_prep
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_dedup_time'] += time_dedup
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_write_time'] += time_write
+                    MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cpu_time'] += time_cpu
+                    MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cuda_time'] += cuda_time
             # APAN
             elif self.memory_param['deliver_to'] == 'neighbors':
+                cpu_time_start = perf_counter()
                 mem_src = memory[:num_true_edges]
                 mem_dst = memory[num_true_edges:num_true_edges * 2]
                 if self.dim_edge_feat > 0:
@@ -654,42 +753,70 @@ class MailBox():
                     dst_mail = torch.cat([mem_dst, mem_src], dim=1)
                 mail = torch.cat([src_mail, dst_mail], dim=0)
                 mail = torch.cat([mail, mail[block.edges()[0].long()]], dim=0)
+                cpu_time_end = perf_counter()
+                cpu_time = cpu_time_end - cpu_time_start
+
+                cuda_time_start = perf_counter()
                 mail_ts = torch.from_numpy(ts[:num_true_edges * 2]).to(self.device)
                 mail_ts = torch.cat([mail_ts, mail_ts[block.edges()[0].long()]], dim=0)
-
-                time_mailbox_prep = time.time() - time_mailbox_prep_start
-                time_dedup_start = time.time()
+                if aggressive_profiling:
+                    torch.cuda.synchronize()
+                cuda_time_end = perf_counter()
+                cuda_time += cuda_time_end - cuda_time_start
+                
+                time_mailbox_prep_end = perf_counter()
+                time_mailbox_prep = time_mailbox_prep_end - time_mailbox_prep_start
+                time_dedup_start = perf_counter()
 
                 if self.memory_param['mail_combine'] == 'mean':
+                    cpu_time_start = perf_counter()
                     (nid, idx) = torch.unique(block.dstdata['ID'], return_inverse=True)
                     mail = scatter(mail, idx, reduce='mean', dim=0)
                     mail_ts = scatter(mail_ts, idx, reduce='mean')
+                    cpu_time_end = perf_counter()
+                    cpu_time += cpu_time_end - cpu_time_start
 
-                    time_dedup = time.time() - time_dedup_start
-                    time_write_start = time.time()
+                    time_dedup_end = perf_counter()
+                    time_dedup = time_dedup_end - time_dedup_start
+                    time_write_start = perf_counter()
 
+                    cpu_time_start = perf_counter()
                     self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
                     self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                    cpu_time_end = perf_counter()
+                    cpu_time += cpu_time_end - cpu_time_start
 
-                    time_write = time.time() - time_write_start
+                    time_write_end = perf_counter()
+                    time_write = time_write_end - time_write_start
 
                 elif self.memory_param['mail_combine'] == 'last':
+                    cpu_time_start = perf_counter()
                     nid = block.dstdata['ID']
                     # find unique nid to update mailbox
                     uni, inv = torch.unique(nid, return_inverse=True)
+                    cpu_time_end = perf_counter()
+                    cpu_time += cpu_time_end - cpu_time_start
+                    cuda_time_start = perf_counter()
                     perm = torch.arange(inv.size(0), dtype=inv.dtype, device=inv.device)
                     perm = inv.new_empty(uni.size(0)).scatter_(0, inv, perm)
                     nid = nid[perm]
                     mail = mail[perm]
                     mail_ts = mail_ts[perm]
+                    if aggressive_profiling:
+                        torch.cuda.synchronize()
+                    cuda_time_end = perf_counter()
+                    cuda_time += cuda_time_end - cuda_time_start
 
-                    time_dedup = time.time() - time_dedup_start
-                    time_write_start = time.time()
-
+                    time_dedup_end = perf_counter()
+                    time_dedup = time_dedup_end - time_dedup_start
+                    time_write_start = perf_counter()
+                    cpu_time_start = perf_counter()
                     self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
                     self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
-
-                    time_write = time.time() - time_write_start
+                    cpu_time_end = perf_counter()
+                    cpu_time += cpu_time_end - cpu_time_start
+                    time_write_end = perf_counter()
+                    time_write = time_write_end - time_write_start
 
                 else:
                     raise NotImplementedError
@@ -698,6 +825,8 @@ class MailBox():
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_index_time'] += time_mailbox_prep
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_dedup_time'] += time_dedup
                     MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_write_time'] += time_write
+                    MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cpu_time'] += time_cpu
+                    MAILBOX_PREP_PROFILE_SUMMARY['mailbox_up_cuda_time'] += cuda_time
 
                 if self.memory_param['mailbox_size'] > 1:
                     if self.update_mail_pos is None:
