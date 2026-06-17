@@ -309,10 +309,11 @@ def mfgs_to_cuda(mfgs):
 def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=False, nfeat_buffs=None, efeat_buffs=None, nids=None, eids=None):
     global TO_DGL_BLOCKS_PROFILE_SUMMARY
     profile = TO_DGL_BLOCKS_PROFILE
+    aggresive_profiling = AGGRESSIVE_PROFILING
 
     # 1st step: combine first block source nodes
     if combine_first:
-        combine_first_start = time.time()
+        combine_first_start = perf_counter()
         for i in range(len(mfgs[0])):
             if mfgs[0][i].num_src_nodes() > mfgs[0][i].num_dst_nodes():
                 num_dst = mfgs[0][i].num_dst_nodes()
@@ -330,7 +331,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 b.edata['dt'] = mfgs[0][i].edata['dt']
                 b.edata['ID'] = mfgs[0][i].edata['ID']
                 mfgs[0][i] = b
-        combine_first_time = time.time() - combine_first_start
+        combine_first_end = perf_counter()
+        combine_first_time = combine_first_end - combine_first_start
 
     # 2nd step: prepare input features
     t_idx = 0
@@ -342,16 +344,17 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
     if node_feats is not None:
         for b in mfgs[0]:
             if pinned:
-                idx_time_start = time.time()
+                idx_time_start = perf_counter()
                 if nids is not None:
                     idx = nids[i]
                 else:
                     idx = b.srcdata['ID'].cpu().long()
                 torch.index_select(node_feats, 0, idx, out=nfeat_buffs[i][:idx.shape[0]])
-                node_idx_time = time.time() - idx_time_start
+                idx_time_end = perf_counter()
+                node_idx_time = idx_time_end - idx_time_start
                 total_node_idx_time += node_idx_time
 
-                cuda_start_time = time.time()
+                cuda_start_time = perf_counter()
 
                 #Fix to Run GDELT on CPU
                 target_device = b.device
@@ -361,16 +364,19 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 i += 1
 
                 # Synchronize to get accurate CUDA time measurement
-                if torch.cuda.is_available():
+                if aggresive_profiling and torch.cuda.is_available():
                     torch.cuda.synchronize()
-                node_cuda_time = time.time() - cuda_start_time
+                
+                cuda_end_time = perf_counter()
+                node_cuda_time = cuda_end_time - cuda_start_time
                 total_node_cuda_time += node_cuda_time
 
             else:
-                idx_time_start = time.time()
+                idx_time_start = perf_counter()
                 idx = b.srcdata['ID'].long().to(node_feats.device)
                 srch = node_feats[idx].float()
-                node_idx_time = time.time() - idx_time_start
+                idx_time_end = perf_counter()
+                node_idx_time = idx_time_end - idx_time_start
                 total_node_idx_time += node_idx_time
                 # srch = node_feats[b.srcdata['ID'].long()].float()
                 # print("index device: ", b.srcdata['ID'].device, "node_feats device: ", node_feats.device)
@@ -383,9 +389,11 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 b.srcdata['h'] = srch.to(target_device)
 
 
-                if torch.cuda.is_available():
+                if aggresive_profiling and torch.cuda.is_available():
                     torch.cuda.synchronize()
-                node_cuda_time = time.time() - cuda_start_time
+                
+                cuda_end_time = time.time()
+                node_cuda_time = cuda_end_time - cuda_start_time
                 total_node_cuda_time += node_cuda_time
 
     # 3rd step: prepare edge features
@@ -399,17 +407,20 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 if b.num_src_nodes() > b.num_dst_nodes():
                     if pinned:
 
-                        idx_time_start = time.time()
+                        idx_time_start = perf_counter()
 
                         if eids is not None:
                             idx = eids[i]
                         else:
                             idx = b.edata['ID'].cpu().long()
                         torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
+
+                        idx_time_end = perf_counter()
                         
-                        edge_idx_time = time.time() - idx_time_start
+                        edge_idx_time = idx_time_end - idx_time_start
                         total_edge_idx_time += edge_idx_time
-                        cuda_start_time = time.time()
+
+                        cuda_start_time = perf_counter()
 
                         #GDELT CPU fix
                         target_device = b.device
@@ -420,19 +431,23 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
 
                         i += 1
 
-                        if torch.cuda.is_available():
+                        if aggresive_profiling and torch.cuda.is_available():
                             torch.cuda.synchronize()
-                        edge_cuda_time = time.time() - cuda_start_time
+                            
+                        cuda_end_time = perf_counter()
+                        edge_cuda_time = cuda_end_time - cuda_start_time
                         total_edge_cuda_time += edge_cuda_time
                     else:
                         # edge_feats_device = edge_feats.device
-                        idx_time_start = time.time()
+                        idx_time_start = perf_counter()
                         idx = b.edata['ID'].long().to(edge_feats.device)
                         srch = edge_feats[idx].float()
+                        idx_time_end = perf_counter()
 
-                        edge_idx_time = time.time() - idx_time_start
+                        edge_idx_time = idx_time_end - idx_time_start
                         total_edge_idx_time += edge_idx_time
-                        cuda_start_time = time.time()
+
+                        cuda_start_time = perf_counter()
                         # srch = edge_feats[b.edata['ID'].long()].float()
 
                         #GDELT CPU fix
@@ -440,9 +455,12 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         #b.edata['f'] = srch.cuda()
                         b.edata['f'] = srch.to(target_device)
 
-                        if torch.cuda.is_available():
+                        if aggresive_profiling and torch.cuda.is_available():
                             torch.cuda.synchronize()
-                        edge_cuda_time = time.time() - cuda_start_time
+                            
+                        cuda_end_time = perf_counter()
+                        edge_cuda_time = cuda_end_time - cuda_start_time
+                        
                         total_edge_cuda_time += edge_cuda_time
 
     if profile:
