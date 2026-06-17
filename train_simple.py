@@ -1225,30 +1225,29 @@ for e in range(train_param['epoch']):
                 t_prep_s = time.time()
                 # if e == 15:
                 #     to_dgl_blocks_ob(ret, sample_param['history'])
+                initial_dgl_block_start = perf_counter()
                 if gnn_param['arch'] != 'identity':
                     mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=ALL_GPU)
                 else:
                     mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
+                initial_dgl_block_end = perf_counter()
+                estimated_prep_times["initial_to_dgl_blocks"] += (initial_dgl_block_end - initial_dgl_block_start)
                 prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
 
-                #Valiating the time for to_dgl_blocks conversion
-                estimated_prep_times["initial_to_dgl_blocks"] += time.time() - t_prep_s
-
                 t_prepare_s = time.time()
+                prepare_input_start = perf_counter()
                 mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+                prepare_input_end = perf_counter()
                 prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
+                estimated_prep_times["prepare_input"] += (prepare_input_end - prepare_input_start)
 
-                #Valiating the time for prepare_input conversion
-                estimated_prep_times["prepare_input"] += time.time() - t_prepare_s
-
+                prep_input_mails_start = perf_counter()
                 if mailbox is not None:
-                    t_mailbox_prep_s = time.time()
                     mailbox.prep_input_mails(mfgs[0])
-                    prep_time_breakdown["mailbox_prep"] += time.time() - t_mailbox_prep_s
+                prep_input_mails_end = perf_counter()
+                estimated_prep_times["mailbox_prep"] += (prep_input_mails_end - prep_input_mails_start)
                 time_prep += time.time() - t_prep_s
                 
-                #valuating the time for mailbox preparation
-                estimated_prep_times["mailbox_prep"] += time.time() - t_mailbox_prep_s
                 ########################################
                 # check input mails
                 ########################################
@@ -1283,32 +1282,40 @@ for e in range(train_param['epoch']):
                     mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
                     block = None
                     if memory_param['deliver_to'] == 'neighbors':
+                        post_dgl_blocks_start = perf_counter()
                         block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
-                    prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
+                        post_dgl_blocks_end = perf_counter()
+                        prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
 
-                    estimated_prep_times["post_to_dgl_blocks"] += time.time() - t_prep_s
+                    estimated_prep_times["post_to_dgl_blocks"] += (post_dgl_blocks_end - post_dgl_blocks_start)
 
                     t_prep_mailbox_s = time.time()
+                    mailbox_update_start = perf_counter()
                     mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
+                    mailbox_update_end = perf_counter()
+                    estimated_prep_times["mailbox_update"] += (mailbox_update_end - mailbox_update_start)
+
+                    mailbox_update_memory_start = perf_counter()
                     mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
                                                             model.memory_updater.last_updated_memory,
                                                             root_nodes,
                                                             model.memory_updater.last_updated_ts,
                                                             threshold=SIM_THRESHOLD, any=SIM_ANY)
+                    mailbox_update_memory_end = perf_counter()
+                    estimated_prep_times["update_memory_and_check_stablizing"] += (mailbox_update_memory_end - mailbox_update_memory_start)
+
                     stable_flag = mailbox.get_full_node_stable_flag()
                     if prev_stable_flag is not None:
                         flips = (stable_flag != prev_stable_flag).sum().item()
                         flip_ratio_log.append(flips / stable_flag.shape[0])
                     prev_stable_flag = stable_flag.clone()
-                    prep_time_breakdown["mailbox_update"] += time.time() - t_prep_mailbox_s
-
-                    estimated_prep_times["mailbox_update"] += time.time() - t_prep_mailbox_s
 
                     t_batch_post_s = time.time()
 
                     t_forming_batch_s = time.time()
                     # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)
                     # input("Press Enter to continue...")
+                    update_nodes_start = perf_counter()
                     color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
                     batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
                     t_flag_update_s = time.time()
@@ -1316,14 +1323,18 @@ for e in range(train_param['epoch']):
                     # mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
                     color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                     batching_time_breakdown["updating_stable_flag"] += time.time() - t_flag_update_s
+                    update_nodes_end = perf_counter()
 
-                    estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
+                    estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
+
                 else:
                     t_forming_batch_s = time.time()
+                    update_nodes_start = perf_counter()
                     color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
+                    update_nodes_end = perf_counter()
                     color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                     batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
-                    estimated_prep_times["updating_indptr_and_stable_flag"] += time.time() - t_forming_batch_s
+                    estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
                     
                 prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
                 time_prep += time.time() - t_prep_s
@@ -1353,37 +1364,48 @@ for e in range(train_param['epoch']):
             print('\tChunk total training time:{:.2f}s, chunk coloring time {}, total coloring time {}'.format(total_train_time_chunk, total_coloring_time_chunk, total_coloring_time))
             print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
             print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
-            print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(estimated_prep_times["initial_to_dgl_blocks"], estimated_prep_times["prepare_input"], 
-            estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["updating_indptr_and_stable_flag"]))
-            print('\t Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
+            print("***********************************************")
 
-            if args.profile_to_dgl_blocks:
-                # input("END OF BATCH TRAINING - Press Enter to see to_dgl_blocks profile...")
-                tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
-                tmp_mailbox_prep_profile = get_mailbox_prep_profile_summary()
-                print_to_dgl_blocks_profile()
-                # print(tmp_to_dgl_blocks_profile)
-                print("\tCaptured Training Loop to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / 
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(
+            estimated_prep_times["initial_to_dgl_blocks"], 
+            estimated_prep_times["prepare_input"], 
+            estimated_prep_times["mailbox_prep"], 
+            estimated_prep_times["post_to_dgl_blocks"], 
+            estimated_prep_times["mailbox_update"], 
+            estimated_prep_times["update_memory_and_check_stablizing"], 
+            estimated_prep_times["updating_indptr_and_stable_flag"]
+        ))
+        
+        if args.profile_to_dgl_blocks:
+            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            tmp_mailbox_prep_profile = get_mailbox_prep_profile_summary()
+            print_to_dgl_blocks_profile()
+            print("\tCaptured Training Loop to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] / 
                                                                                 estimated_prep_times["initial_to_dgl_blocks"] if estimated_prep_times["initial_to_dgl_blocks"] > 0 else 0))
-                print("\tCaptured Prepare Input time: {:.2f}%".format(100 * (tmp_to_dgl_blocks_profile['combine_first_time'] + 
+            print("\tCaptured Prepare Input time: {:.2f}%".format(100 * (tmp_to_dgl_blocks_profile['combine_first_time'] + 
                                                                          tmp_to_dgl_blocks_profile['node_index_time'] +
                                                                          tmp_to_dgl_blocks_profile['edge_index_time'] + 
                                                                          tmp_to_dgl_blocks_profile['node_cuda_time'] +
                                                                          tmp_to_dgl_blocks_profile['edge_cuda_time']
                                                                          ) / estimated_prep_times["prepare_input"] if estimated_prep_times["prepare_input"] > 0 else 0))
-                print_mailbox_prep_profile()
-                print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * tmp_mailbox_prep_profile['mailbox_index_time'] / 
+            print_mailbox_prep_profile()
+            print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile['mailbox_index_time'] + 
+                                                                        tmp_mailbox_prep_profile['mailbox_cuda_time']) / 
                                                                     estimated_prep_times["mailbox_prep"] if estimated_prep_times["mailbox_prep"] > 0 else 0))
-                print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
+            
+            print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
                                                                           tmp_mailbox_prep_profile["mailbox_up_dedup_time"] + 
-                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] + 
-                                                                          tmp_mailbox_prep_profile["mem_stab_prep_time"] +
-                                                                          tmp_mailbox_prep_profile["mem_stab_math_time"] +
-                                                                          tmp_mailbox_prep_profile["mem_stab_write_time"]
+                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] 
+                                                                          #tmp_mailbox_prep_profile["mem_stab_prep_time"] +
+                                                                          #tmp_mailbox_prep_profile["mem_stab_math_time"] +
+                                                                          #tmp_mailbox_prep_profile["mem_stab_write_time"]
                                                                          ) / estimated_prep_times["mailbox_update"] if estimated_prep_times["mailbox_update"] > 0 else 0))
-                # reset_to_dgl_blocks_profile()
-                # input("Press Enter to continue training...")
-            print("***********************************************")
+            
+            print("\tCaptured update_memory_and_check_stablizing time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mem_stab_prep_time"] +
+                                                                                              tmp_mailbox_prep_profile["mem_stab_math_time"] +
+                                                                                              tmp_mailbox_prep_profile["mem_stab_write_time"]
+                                                                         ) / estimated_prep_times["update_memory_and_check_stablizing"] if estimated_prep_times["update_memory_and_check_stablizing"] > 0 else 0))
+
 
     else:
         print("Entering normal training mode...")
