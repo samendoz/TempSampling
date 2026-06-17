@@ -1536,8 +1536,6 @@ for e in range(train_param['epoch']):
         prep_time_breakdown["mailbox_update"],
         prep_time_breakdown["batch_postprocessing"],
     ))
-    print('\t Initial Captured prep time ratio: {:.2f}%'.format(100 * sum(prep_time_breakdown.values()) / time_prep if time_prep > 0 else 0))
-    print('\t Estimated Captured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
     print('\t Evaluation time:{:.2f}s'.format(eval_time))
 
     if flip_ratio_log:
