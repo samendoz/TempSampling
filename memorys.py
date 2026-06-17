@@ -400,7 +400,7 @@ class MailBox():
             else:
                 # print("node memory device", self.node_memory.device, "b.srcdata device", b.srcdata['ID'].device)
                 # move index to the device of the node memory and mailbox---this is for no-all-gpu case
-                print("\t Else in mailbox prep")
+                #print("\t Else in mailbox prep")
                 time_cuda_start = perf_counter()
                 device = self.node_memory.device
                 idx = b.srcdata['ID'].long()
