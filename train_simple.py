@@ -1286,8 +1286,7 @@ for e in range(train_param['epoch']):
                         block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
                         post_dgl_blocks_end = perf_counter()
                         prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-
-                    estimated_prep_times["post_to_dgl_blocks"] += (post_dgl_blocks_end - post_dgl_blocks_start)
+                        estimated_prep_times["post_to_dgl_blocks"] += (post_dgl_blocks_end - post_dgl_blocks_start)
 
                     t_prep_mailbox_s = time.time()
                     mailbox_update_start = perf_counter()
