@@ -341,6 +341,10 @@ class MailBox():
         aggressive_profiling = AGGRESSIVE_PROFILING
 
         for i, b in enumerate(mfg):
+
+            time_idx = 0
+            time_cuda = 0
+
             if use_pinned_buffers:
 
                 time_idx_start = perf_counter()
