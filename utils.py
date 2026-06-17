@@ -154,69 +154,58 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
     profile = TO_DGL_BLOCKS_PROFILE
     aggresive_profiling = AGGRESSIVE_PROFILING
 
+    #Establisj execution device
+    device = torch.device('cuda:0' if cuda and torch.cuda.is_available() else 'cpu')
+
+
+
     for r in ret:
         start = perf_counter()
+
+        #1. Extract raw arrays from ret and push them to target device
+        #Convert numpy arrays to tensors
+        col_tensor = torch.from_numpy(r.col()).to(device)
+        row_tensor = torch.from_numpy(r.row()).to(device)
+        nodes_tensor = torch.from_numpy(r.nodes()).to(device)
+        dts_tensor = torch.from_numpy(r.dts()).to(device)
+        ts_tensor = torch.from_numpy(r.ts()).to(device)
+        eid_tensor = torch.from_numpy(r.eid()).to(device)
+
         if not reverse:
             
             create_block_start = perf_counter()
-            b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
+            b = dgl.create_block((col_tensor, row_tensor), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out(), device=device)
+            if aggresive_profiling and torch.cuda.is_available():
+                torch.cuda.synchronize()
             create_block_end = perf_counter()
             create_dgl_block_time = create_block_end - create_block_start
 
-            src_id_start_time = perf_counter()
-            b.srcdata['ID'] = torch.from_numpy(r.nodes())
-            src_id_end_time = perf_counter()
-            src_id_time = src_id_end_time - src_id_start_time
-
-
-            edge_dt_start_time = perf_counter()
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
-            edge_dt_end_time = perf_counter()
-            edge_dt_time = edge_dt_end_time - edge_dt_start_time
-
-
-            src_ts_start_time = perf_counter()
-            b.srcdata['ts'] = torch.from_numpy(r.ts())
-            src_ts_end_time = perf_counter()
-            src_ts_time = src_ts_end_time - src_ts_start_time
+            b.srcdata['ID'] = nodes_tensor
+            b.edata['dt'] = dts_tensor[b.num_dst_nodes():]
+            b.srcdata['ts'] = ts_tensor
 
         else:
 
             create_block_start = perf_counter()
-            b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
+            b = dgl.create_block((row_tensor, col_tensor), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in(), device=device)
+            if aggresive_profiling and torch.cuda.is_available():
+                torch.cuda.synchronize()
             create_block_end = perf_counter()
             create_dgl_block_time = create_block_end - create_block_start
 
-            src_id_start_time = perf_counter()
-            b.dstdata['ID'] = torch.from_numpy(r.nodes())
-            src_id_end_time = perf_counter()
-            src_id_time = src_id_end_time - src_id_start_time
-
-            edge_dt_start_time = perf_counter()
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
-            edge_dt_end_time = perf_counter()
-            edge_dt_time = edge_dt_end_time - edge_dt_start_time
-
-            src_ts_start_time = perf_counter()
-            b.dstdata['ts'] = torch.from_numpy(r.ts())
-            src_ts_end_time = perf_counter()
-            src_ts_time = src_ts_end_time - src_ts_start_time
+            b.dstdata['ID'] = nodes_tensor
+            b.edata['dt'] = dts_tensor[b.num_src_nodes():]
+            b.dstdata['ts'] = ts_tensor
 
         id_time_start = perf_counter()
-        b.edata['ID'] = torch.from_numpy(r.eid())
+        b.edata['ID'] = eid_tensor
         id_time_end = perf_counter()
         id_time = id_time_end - id_time_start
 
         create_block_end_time = perf_counter()
 
         cuda_start = perf_counter()
-        if cuda:
-            b = b.to('cuda:0')
-            if aggresive_profiling and torch.cuda.is_available():
-                torch.cuda.synchronize()
-            mfgs.append(b)
-        else:
-            mfgs.append(b)
+        mfgs.append(b)
         cuda_end = perf_counter()
         end = perf_counter()
 
@@ -227,9 +216,9 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
             TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
             TO_DGL_BLOCKS_PROFILE_SUMMARY['create_dgl_block_time'] += create_dgl_block_time
-            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += src_id_time
-            TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += edge_dt_time
-            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_ts_time'] += src_ts_time
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += 0
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += 0
+            TO_DGL_BLOCKS_PROFILE_SUMMARY['src_ts_time'] += 0
             TO_DGL_BLOCKS_PROFILE_SUMMARY['id_time'] += id_time
 
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
@@ -273,32 +262,26 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     profile = TO_DGL_BLOCKS_PROFILE
     aggresive_profiling = AGGRESSIVE_PROFILING
 
+    #Establish device
+    device = torch.device('cuda:0' if (cuda and torch.cuda.is_available()) else 'cpu')
 
     start = perf_counter()
     create_block_start = perf_counter()
-    b = dgl.create_block(([],[]), num_src_nodes=root_nodes.shape[0], num_dst_nodes=root_nodes.shape[0])
+    b = dgl.create_block(([], []), 
+                         num_src_nodes=root_nodes.shape[0], 
+                         num_dst_nodes=root_nodes.shape[0], 
+                         device=device)
+    b.srcdata['ID'] = torch.from_numpy(root_nodes).to(device)
+    b.edata['dt'] = torch.from_numpy(ts).to(device)
+    if aggresive_profiling and torch.cuda.is_available():
+                torch.cuda.synchronize()
+
     create_block_end = perf_counter()
     create_dgl_block_time = create_block_end - create_block_start
-
-    src_id_start_time = perf_counter()
-    b.srcdata['ID'] = torch.from_numpy(root_nodes)
-    src_id_end_time = perf_counter()
-    src_id_time = src_id_end_time - src_id_start_time
-
-    edge_dt_start_time = perf_counter()
-    b.edata['dt'] = torch.from_numpy(ts)
-    edge_dt_end_time = perf_counter()
-    edge_dt_time = edge_dt_end_time - edge_dt_start_time
-
     create_block_end_time = perf_counter()
 
     cuda_start = perf_counter()
-    if cuda:
-        mfgs.insert(0, [b.to('cuda:0')])
-        if aggresive_profiling and torch.cuda.is_available():
-                torch.cuda.synchronize()
-    else:
-        mfgs.insert(0, [b])
+    mfgs.insert(0, [b])
     cuda_end = perf_counter()
     end = perf_counter()
 
@@ -309,8 +292,8 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
         TO_DGL_BLOCKS_PROFILE_SUMMARY['cuda_copy_time'] += (cuda_end - cuda_start)
         TO_DGL_BLOCKS_PROFILE_SUMMARY['total_time'] += (end - start)
         TO_DGL_BLOCKS_PROFILE_SUMMARY['create_dgl_block_time'] += create_dgl_block_time
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += src_id_time
-        TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += edge_dt_time
+        #TO_DGL_BLOCKS_PROFILE_SUMMARY['src_id_time'] += 0
+        #TO_DGL_BLOCKS_PROFILE_SUMMARY['edge_dt_time'] += 0
 
     return mfgs
 
