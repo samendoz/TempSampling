@@ -66,4 +66,4 @@ adaptive_update_epoch: 1
 
 
 # Enable pre fetch 
-prefetch: true
+prefetch: false
