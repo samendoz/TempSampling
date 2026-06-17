@@ -61,7 +61,16 @@ def print_mailbox_prep_profile():
 
     print("Mailbox Prep Profile Summary:")
     print("\tMailbox Index Time: {:.6f}s Mailbox Update Index Time: {:.6f}s Mailbox Update Deduplication Time: {:.6f}s Mailbox Update Write Time: {:.6f}s Mailbox Update CPU Time: {:.6f}s Mailbox Update CUDA Time: {:.6f}s Memory Stability Prep Time: {:.6f}s Memory Stability Math Time: {:.6f}s Memory Stability Write Time: {:.6f}s".format(
-        mailbox_index_time, mailbox_up_index_time, mailbox_up_dedup_time, mailbox_up_write_time, mailbox_up_cpu_time, mailbox_up_cuda_time, mem_stab_prep_time, mem_stab_math_time, mem_stab_write_time))
+        mailbox_index_time, 
+        mailbox_up_index_time, 
+        mailbox_up_dedup_time, 
+        mailbox_up_write_time, 
+        mailbox_up_cpu_time, 
+        mailbox_up_cuda_time, 
+        mem_stab_prep_time, 
+        mem_stab_math_time, 
+        mem_stab_write_time
+    ))
 
 def enable_profiling():
     global PROFILE

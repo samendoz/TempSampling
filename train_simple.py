@@ -919,8 +919,15 @@ for e in range(train_param['epoch']):
         # "event_stable_ratio", event_stable/event_check,
         # "total_check", event_check, "break_point", event_check-event_stable)
         print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
-        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(estimated_prep_times["initial_to_dgl_blocks"], estimated_prep_times["prepare_input"], 
-            estimated_prep_times["mailbox_prep"], estimated_prep_times["post_to_dgl_blocks"], estimated_prep_times["mailbox_update"], estimated_prep_times["update_memory_and_check_stablizing"], estimated_prep_times["updating_indptr_and_stable_flag"]))
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(
+            estimated_prep_times["initial_to_dgl_blocks"], 
+            estimated_prep_times["prepare_input"], 
+            estimated_prep_times["mailbox_prep"], 
+            estimated_prep_times["post_to_dgl_blocks"], 
+            estimated_prep_times["mailbox_update"], 
+            estimated_prep_times["update_memory_and_check_stablizing"], 
+            estimated_prep_times["updating_indptr_and_stable_flag"]
+        ))
         print('\tCaptured prep time ratio: {:.2f}%'.format(100 * sum(estimated_prep_times.values()) / time_prep if time_prep > 0 else 0))
         if prefetch is not None:
             print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
@@ -941,15 +948,22 @@ for e in range(train_param['epoch']):
                                                                          tmp_to_dgl_blocks_profile['edge_cuda_time']
                                                                          ) / estimated_prep_times["prepare_input"] if estimated_prep_times["prepare_input"] > 0 else 0))
             print_mailbox_prep_profile()
-            print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * tmp_mailbox_prep_profile['mailbox_index_time'] / 
+            print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile['mailbox_index_time'] + 
+                                                                        tmp_mailbox_prep_profile['mailbox_cuda_time']) / 
                                                                     estimated_prep_times["mailbox_prep"] if estimated_prep_times["mailbox_prep"] > 0 else 0))
+            
             print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
                                                                           tmp_mailbox_prep_profile["mailbox_up_dedup_time"] + 
-                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] + 
-                                                                          tmp_mailbox_prep_profile["mem_stab_prep_time"] +
-                                                                          tmp_mailbox_prep_profile["mem_stab_math_time"] +
-                                                                          tmp_mailbox_prep_profile["mem_stab_write_time"]
+                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"] 
+                                                                          #tmp_mailbox_prep_profile["mem_stab_prep_time"] +
+                                                                          #tmp_mailbox_prep_profile["mem_stab_math_time"] +
+                                                                          #tmp_mailbox_prep_profile["mem_stab_write_time"]
                                                                          ) / estimated_prep_times["mailbox_update"] if estimated_prep_times["mailbox_update"] > 0 else 0))
+            
+            print("\tCaptured update_memory_and_check_stablizing time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mem_stab_prep_time"] +
+                                                                                              tmp_mailbox_prep_profile["mem_stab_math_time"] +
+                                                                                              tmp_mailbox_prep_profile["mem_stab_write_time"]
+                                                                         ) / estimated_prep_times["update_memory_and_check_stablizing"] if estimated_prep_times["update_memory_and_check_stablizing"] > 0 else 0))
 
     
         print("***********************************************")

@@ -73,7 +73,21 @@ def print_to_dgl_blocks_profile():
 
     print('\t=== to_dgl_blocks profiling summary ===')
     print('\tblocks created: {:d}'.format(count))
-    print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s combine_first_time: {:.6f}s node_index_time: {:.6f}s edge_index_time: {:.6f}s node_cuda_time: {:.6f}s edge_cuda_time: {:.6f}s create_dgl_block_time: {:.6f}s src_id_time: {:.6f}s edge_dt_time: {:.6f}s src_ts_time: {:.6f}s id_time: {:.6f}s'.format(create_block_time, cuda_copy_time, total_time, combine_first_time, node_index_time, edge_index_time, node_cuda_time, edge_cuda_time, create_dgl_block_time, src_id_time, edge_dt_time, src_ts_time, id_time))
+    print('\tcreate_block_time: {:.6f}s cuda_copy_time: {:.6f}s total_to_dgl_blocks_time: {:.6f}s combine_first_time: {:.6f}s node_index_time: {:.6f}s edge_index_time: {:.6f}s node_cuda_time: {:.6f}s edge_cuda_time: {:.6f}s create_dgl_block_time: {:.6f}s src_id_time: {:.6f}s edge_dt_time: {:.6f}s src_ts_time: {:.6f}s id_time: {:.6f}s'.format(
+        create_block_time, 
+        cuda_copy_time, 
+        total_time, 
+        combine_first_time, 
+        node_index_time, 
+        edge_index_time, 
+        node_cuda_time, 
+        edge_cuda_time, 
+        create_dgl_block_time, 
+        src_id_time, 
+        edge_dt_time, 
+        src_ts_time, 
+        id_time
+    ))
 
 
 def get_to_dgl_blocks_profile_summary():
@@ -460,7 +474,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                             
                         cuda_end_time = perf_counter()
                         edge_cuda_time = cuda_end_time - cuda_start_time
-                        
+
                         total_edge_cuda_time += edge_cuda_time
 
     if profile:
