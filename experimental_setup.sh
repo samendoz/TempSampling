@@ -70,7 +70,9 @@ pip install \
     "tqdm>=4.61.0" \
     "pybind11>=2.6.2" \
     scikit-learn \
-    setuptools
+    setuptools \
+    nvtx \
+    matplotlib
 
 # ---------------------------------------------------------------------------
 # 6. torch-scatter (matches torch 2.2.0+cu121)
