@@ -80,12 +80,13 @@ timing_re     = re.compile(r'total time:([\d.]+)s\s+sample time:([\d.]+)s\s+prep
 best_re       = re.compile(r'Best epoch:(\d+)\s+Best AP:([\d.]+)\s+Best AUC:([\d.]+)')
 flip_re       = re.compile(r'stable flag flip ratio.*?mean:([\d.]+).*?std:([\d.]+).*?min:([\d.]+).*?max:([\d.]+).*?batches:(\d+)')
 flip_list_re  = re.compile(r'stable flag flip list: ([\d. ]+)')
+batch_node_re = re.compile(r'batch node stats: batch:(\d+) batch_size:(\d+) unique_pos_nodes:(\d+)')
 dgl_profile_re    = re.compile(r'create_block_time: ([\d.]+)s cuda_copy_time: ([\d.]+)s total_to_dgl_blocks_time: ([\d.]+)s combine_first_time: ([\d.]+)s node_index_time: ([\d.]+)s edge_index_time: ([\d.]+)s node_cuda_time: ([\d.]+)s edge_cuda_time: ([\d.]+)s create_dgl_block_time: ([\d.]+)s src_id_time: ([\d.]+)s edge_dt_time: ([\d.]+)s src_ts_time: ([\d.]+)s id_time: ([\d.]+)s')
 mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update Index Time: ([\d.]+)s Mailbox Update Deduplication Time: ([\d.]+)s Mailbox Update Write Time: ([\d.]+)s Mailbox Update CPU Time: ([\d.]+)s Mailbox Update CUDA Time: ([\d.]+)s Memory Stability Prep Time: ([\d.]+)s Memory Stability Math Time: ([\d.]+)s Memory Stability Write Time: ([\d.]+)s')
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
 # Added the missing update_memory_and_check_stablizing component
-estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, update_memory_and_check_stablizing time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s')
-batch_node_re = re.compile(r'batch node stats: batch:(\d+) batch_size:(\d+) unique_pos_nodes:(\d+)')
+estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, update_memory_and_check_stablizing time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s, get_stable_flag time: ([\d.]+)s')
+#add the results fetched by sampling_re to the CSV as well, with keys sampling_time, updating_indptr_time, updating_stable_flag_time
 
 rows = []
 flip_dist_rows = []
@@ -124,6 +125,13 @@ with open(log_path) as f:
             epoch = current.get('epoch', '')
             for batch_idx, val in enumerate(m.group(1).split()):
                 flip_dist_rows.append({'epoch': epoch, 'batch': batch_idx, 'flip_ratio': val})
+            continue
+        m = batch_node_re.search(line)
+        if m and current is not None:
+            epoch = current.get('epoch', '')
+            batch_node_rows.append({'epoch': epoch, 'batch': m.group(1),
+                                     'batch_size': m.group(2),
+                                     'unique_pos_nodes': m.group(3)})
             continue
         # m = prep_re.search(line)
         # if m and current is not None:
@@ -178,13 +186,8 @@ with open(log_path) as f:
                 'estimated_mailbox_update': m.group(5),
                 'estimated_update_memory_and_check_stablizing': m.group(6), # Added to capture
                 'estimated_updating_indptr_and_stable_flag': m.group(7),    # Shifted to 7
+                'estimated_get_stable_flag': m.group(8),
             })
-            continue
-        m = batch_node_re.search(line)
-        if m:
-            epoch = current.get('epoch', '') if current is not None else ''
-            batch_node_rows.append({'epoch': epoch, 'batch': m.group(1),
-                             'batch_size': m.group(2), 'unique_pos_nodes': m.group(3)})
             continue
 
 flush(current, rows)
@@ -203,7 +206,7 @@ fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'mem_stab_prep_time', 'mem_stab_math_time', 'mem_stab_write_time',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
               'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time',
-              'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_update_memory_and_check_stablizing', 'estimated_updating_indptr_and_stable_flag']
+              'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_update_memory_and_check_stablizing', 'estimated_updating_indptr_and_stable_flag', 'estimated_get_stable_flag']
 with open(csv_path, 'w', newline='') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
     w.writeheader()
@@ -216,7 +219,7 @@ if flip_dist_rows:
         w.writeheader()
         w.writerows(flip_dist_rows)
     print(f"Flip distribution saved to {flip_dist_path} ({len(flip_dist_rows)} rows)")
-    
+
 if batch_node_rows:
     with open(batch_node_stats_path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=['epoch', 'batch', 'batch_size', 'unique_pos_nodes'])

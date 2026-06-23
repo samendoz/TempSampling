@@ -586,7 +586,8 @@ for e in range(train_param['epoch']):
                             "post_to_dgl_blocks": 0,
                             "mailbox_update": 0, 
                             "update_memory_and_check_stablizing": 0,
-                            "updating_indptr_and_stable_flag": 0}
+                            "updating_indptr_and_stable_flag": 0,
+                            "get_stable_flag": 0}
     #Variables to determine the stable flag ratio
     flip_ratio_log = []
     prev_stable_flag = None
@@ -844,11 +845,14 @@ for e in range(train_param['epoch']):
                 mailbox_update_memory_end = perf_counter()
                 estimated_prep_times["update_memory_and_check_stablizing"] += (mailbox_update_memory_end - mailbox_update_memory_start)
 
+                get_stable_flag_start = perf_counter()
                 stable_flag = mailbox.get_full_node_stable_flag()
                 if prev_stable_flag is not None:
                     flips = (stable_flag != prev_stable_flag).sum().item()
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
+                get_stable_flag_end = perf_counter()
+                estimated_prep_times["get_stable_flag"] += (get_stable_flag_end - get_stable_flag_start)
                 
                 t_forming_batch_s = time.time()
                 update_nodes_start = perf_counter()
@@ -921,15 +925,21 @@ for e in range(train_param['epoch']):
         # "event_stable_ratio", event_stable/event_check,
         # "total_check", event_check, "break_point", event_check-event_stable)
         print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
-        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s".format(
             estimated_prep_times["initial_to_dgl_blocks"], 
             estimated_prep_times["prepare_input"], 
             estimated_prep_times["mailbox_prep"], 
             estimated_prep_times["post_to_dgl_blocks"], 
             estimated_prep_times["mailbox_update"], 
             estimated_prep_times["update_memory_and_check_stablizing"], 
-            estimated_prep_times["updating_indptr_and_stable_flag"]
+            estimated_prep_times["updating_indptr_and_stable_flag"],
+            estimated_prep_times["get_stable_flag"]
         ))
+
+        captured_prep_time = sum(estimated_prep_times.values())
+        print("\tcaptured prep time: {:.2f}s, time_prep: {:.2f}s, unaccounted prep time: {:.2f}s ({:.1%})".format(
+            captured_prep_time, time_prep, time_prep - captured_prep_time,
+            (time_prep - captured_prep_time) / time_prep if time_prep > 0 else 0))
         if prefetch is not None:
             print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
             prefetch.clear()
@@ -1307,11 +1317,14 @@ for e in range(train_param['epoch']):
                     mailbox_update_memory_end = perf_counter()
                     estimated_prep_times["update_memory_and_check_stablizing"] += (mailbox_update_memory_end - mailbox_update_memory_start)
 
+                    get_stable_flag_start = perf_counter()
                     stable_flag = mailbox.get_full_node_stable_flag()
                     if prev_stable_flag is not None:
                         flips = (stable_flag != prev_stable_flag).sum().item()
                         flip_ratio_log.append(flips / stable_flag.shape[0])
                     prev_stable_flag = stable_flag.clone()
+                    get_stable_flag_end = perf_counter()
+                    estimated_prep_times["get_stable_flag"] += (get_stable_flag_end - get_stable_flag_start)
 
                     t_batch_post_s = time.time()
 
@@ -1369,14 +1382,15 @@ for e in range(train_param['epoch']):
             print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
             print("***********************************************")
 
-        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s".format(
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s".format(
             estimated_prep_times["initial_to_dgl_blocks"], 
             estimated_prep_times["prepare_input"], 
             estimated_prep_times["mailbox_prep"], 
             estimated_prep_times["post_to_dgl_blocks"], 
             estimated_prep_times["mailbox_update"], 
             estimated_prep_times["update_memory_and_check_stablizing"], 
-            estimated_prep_times["updating_indptr_and_stable_flag"]
+            estimated_prep_times["updating_indptr_and_stable_flag"],
+            estimated_prep_times["get_stable_flag"]
         ))
         
         if args.profile_to_dgl_blocks:
