@@ -743,6 +743,8 @@ for e in range(train_param['epoch']):
                 )
 
             unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
+            print(f'batch node stats: batch:{cur_batch} batch_size:{root_nodes.shape[0]} unique_pos_nodes:{unique_pos_root_nodes.shape[0]}')
+
             if sampler is not None:
                 ret = prefetch.get() if prefetch is not None else None
                 if ret is None:
@@ -1213,6 +1215,8 @@ for e in range(train_param['epoch']):
                 ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
                 pos_root_end = root_nodes.shape[0] * 2 // 3
                 unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
+                print(f'batch node stats: batch:{cur_batch} batch_size:{root_nodes.shape[0]} unique_pos_nodes:{unique_pos_root_nodes.shape[0]}')
+
                 if sampler is not None:
                     if 'no_neg' in sample_param and sample_param['no_neg']:
                         pos_root_end = root_nodes.shape[0] * 2 // 3

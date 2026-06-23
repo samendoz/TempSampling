@@ -72,6 +72,7 @@ import sys, re, csv
 log_path = sys.argv[1]
 csv_path = sys.argv[2]
 flip_dist_path = csv_path.replace('.csv', '_flip_dist.csv')
+batch_node_stats_path = csv_path.replace('.csv', '_batch_node_stats.csv')
 
 epoch_re      = re.compile(r'Epoch\s+(\d+):')
 metrics_re    = re.compile(r'train loss:([\d.]+)\s+val ap:([\d.]+)\s+val auc:([\d.]+)')
@@ -84,10 +85,11 @@ mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update I
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
 # Added the missing update_memory_and_check_stablizing component
 estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, update_memory_and_check_stablizing time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s')
-#add the results fetched by sampling_re to the CSV as well, with keys sampling_time, updating_indptr_time, updating_stable_flag_time
+batch_node_re = re.compile(r'batch node stats: batch:(\d+) batch_size:(\d+) unique_pos_nodes:(\d+)')
 
 rows = []
 flip_dist_rows = []
+batch_node_rows = []
 current = None
 
 def flush(current, rows):
@@ -178,6 +180,12 @@ with open(log_path) as f:
                 'estimated_updating_indptr_and_stable_flag': m.group(7),    # Shifted to 7
             })
             continue
+        m = batch_node_re.search(line)
+        if m:
+            epoch = current.get('epoch', '') if current is not None else ''
+            batch_node_rows.append({'epoch': epoch, 'batch': m.group(1),
+                             'batch_size': m.group(2), 'unique_pos_nodes': m.group(3)})
+            continue
 
 flush(current, rows)
 
@@ -208,4 +216,11 @@ if flip_dist_rows:
         w.writeheader()
         w.writerows(flip_dist_rows)
     print(f"Flip distribution saved to {flip_dist_path} ({len(flip_dist_rows)} rows)")
+    
+if batch_node_rows:
+    with open(batch_node_stats_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=['epoch', 'batch', 'batch_size', 'unique_pos_nodes'])
+        w.writeheader()
+        w.writerows(batch_node_rows)
+    print(f"Batch node stats saved to {batch_node_stats_path} ({len(batch_node_rows)} rows)")
 PYEOF
