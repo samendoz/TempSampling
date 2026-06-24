@@ -405,10 +405,10 @@ class MailBox():
                 device = self.node_memory.device
                 idx = b.srcdata['ID'].long()
 
-                b.srcdata['mem'] = self.node_memory[idx]
-                b.srcdata['mem_ts'] = self.node_memory_ts[idx]
-                b.srcdata['mem_input'] = self.mailbox[idx].reshape(b.srcdata['ID'].shape[0], -1)
-                b.srcdata['mail_ts'] = self.mailbox_ts[idx]
+                b.srcdata['mem'] = self.node_memory[idx].cuda(non_blocking=True)
+                b.srcdata['mem_ts'] = self.node_memory_ts[idx].cuda(non_blocking=True)
+                b.srcdata['mem_input'] = self.mailbox[idx].reshape(b.srcdata['ID'].shape[0], -1).cuda(non_blocking=True)
+                b.srcdata['mail_ts'] = self.mailbox_ts[idx].cuda(non_blocking=True)
 
                 if aggressive_profiling:
                     torch.cuda.synchronize()
