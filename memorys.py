@@ -403,7 +403,7 @@ class MailBox():
                 #print("\t Else in mailbox prep")
                 time_cuda_start = perf_counter()
                 device = self.node_memory.device
-                idx = b.srcdata['ID'].long()
+                idx = b.srcdata['ID'].to(device).long()
 
                 b.srcdata['mem'] = self.node_memory[idx].cuda(non_blocking=True)
                 b.srcdata['mem_ts'] = self.node_memory_ts[idx].cuda(non_blocking=True)
