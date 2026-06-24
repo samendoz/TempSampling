@@ -587,7 +587,8 @@ for e in range(train_param['epoch']):
                             "mailbox_update": 0, 
                             "update_memory_and_check_stablizing": 0,
                             "updating_indptr_and_stable_flag": 0,
-                            "get_stable_flag": 0}
+                            "get_stable_flag": 0,
+                            "edge_feat_index": 0}
     #Variables to determine the stable flag ratio
     flip_ratio_log = []
     prev_stable_flag = None
@@ -819,8 +820,11 @@ for e in range(train_param['epoch']):
 
             t_batch_post_s = time.time()
             if mailbox is not None:
+                edge_feat_index_start = perf_counter()
                 eid = rows['Unnamed: 0'].values
                 mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                edge_feat_index_end = perf_counter()
+                estimated_prep_times["edge_feat_index"] += (edge_feat_index_end - edge_feat_index_start)
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':
                     post_dgl_blocks_start = perf_counter()
@@ -925,7 +929,7 @@ for e in range(train_param['epoch']):
         # "event_stable_ratio", event_stable/event_check,
         # "total_check", event_check, "break_point", event_check-event_stable)
         print("\tform_batch time: {:.2f}s, coloring time: {:.2f}s, model training time: {:.2f}s, recording mem time: {:.2f}s, other time: {:.2f}s".format(color_time_breakdown["forming_batch"], color_time_breakdown["coloring"], color_time_breakdown["model training"], color_time_breakdown["record memory"], color_time_breakdown["others"]))
-        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s".format(
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s, edge_feat_index time: {:.2f}s".format(
             estimated_prep_times["initial_to_dgl_blocks"], 
             estimated_prep_times["prepare_input"], 
             estimated_prep_times["mailbox_prep"], 
@@ -933,7 +937,8 @@ for e in range(train_param['epoch']):
             estimated_prep_times["mailbox_update"], 
             estimated_prep_times["update_memory_and_check_stablizing"], 
             estimated_prep_times["updating_indptr_and_stable_flag"],
-            estimated_prep_times["get_stable_flag"]
+            estimated_prep_times["get_stable_flag"],
+            estimated_prep_times["edge_feat_index"]
         ))
 
         captured_prep_time = sum(estimated_prep_times.values())
@@ -1292,8 +1297,11 @@ for e in range(train_param['epoch']):
                 ########################################
 
                 if mailbox is not None:
+                    edge_feat_index_start = perf_counter()
                     eid = rows['Unnamed: 0'].values
                     mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                    edge_feat_index_end = perf_counter()
+                    estimated_prep_times["edge_feat_index"] += (edge_feat_index_end - edge_feat_index_start)
                     block = None
                     if memory_param['deliver_to'] == 'neighbors':
                         post_dgl_blocks_start = perf_counter()
@@ -1382,7 +1390,7 @@ for e in range(train_param['epoch']):
             print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
             print("***********************************************")
 
-        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s".format(
+        print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s, edge_feat_index time: {:.2f}s".format(
             estimated_prep_times["initial_to_dgl_blocks"], 
             estimated_prep_times["prepare_input"], 
             estimated_prep_times["mailbox_prep"], 
@@ -1390,8 +1398,13 @@ for e in range(train_param['epoch']):
             estimated_prep_times["mailbox_update"], 
             estimated_prep_times["update_memory_and_check_stablizing"], 
             estimated_prep_times["updating_indptr_and_stable_flag"],
-            estimated_prep_times["get_stable_flag"]
+            estimated_prep_times["get_stable_flag"],
+            estimated_prep_times["edge_feat_index"]
         ))
+        captured_prep_time = sum(estimated_prep_times.values())
+        print("\tcaptured prep time: {:.2f}s, time_prep: {:.2f}s, unaccounted prep time: {:.2f}s ({:.1%})".format(
+            captured_prep_time, time_prep, time_prep - captured_prep_time,
+            (time_prep - captured_prep_time) / time_prep if time_prep > 0 else 0))
         
         if args.profile_to_dgl_blocks:
             tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()

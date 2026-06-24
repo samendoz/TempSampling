@@ -85,7 +85,8 @@ dgl_profile_re    = re.compile(r'create_block_time: ([\d.]+)s cuda_copy_time: ([
 mailbox_profile_re = re.compile(r'Mailbox Index Time: ([\d.]+)s Mailbox Update Index Time: ([\d.]+)s Mailbox Update Deduplication Time: ([\d.]+)s Mailbox Update Write Time: ([\d.]+)s Mailbox Update CPU Time: ([\d.]+)s Mailbox Update CUDA Time: ([\d.]+)s Memory Stability Prep Time: ([\d.]+)s Memory Stability Math Time: ([\d.]+)s Memory Stability Write Time: ([\d.]+)s')
 sampling_re   = re.compile(r'sampling time: ([\d.]+)s, updating indptr time: ([\d.]+)s, updating stable flag time: ([\d.]+)s')
 # Added the missing update_memory_and_check_stablizing component
-estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, update_memory_and_check_stablizing time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s, get_stable_flag time: ([\d.]+)s')
+estimated_prep_times = re.compile(r'estimated initial to_dgl_blocks time: ([\d.]+)s, prepare_input time: ([\d.]+)s, mailbox prep time: ([\d.]+)s, post to_dgl_blocks time: ([\d.]+)s, mailbox update time: ([\d.]+)s, update_memory_and_check_stablizing time: ([\d.]+)s, updating indptr and stable flag time: ([\d.]+)s, get_stable_flag time: ([\d.]+)s, edge_feat_index time: ([\d.]+)s')
+captured_prep_time_re = re.compile(r'captured prep time: ([\d.]+)s, time_prep: ([\d.]+)s, unaccounted prep time: ([\d.]+)s \(([\d.]+)%\)')
 #add the results fetched by sampling_re to the CSV as well, with keys sampling_time, updating_indptr_time, updating_stable_flag_time
 
 rows = []
@@ -187,6 +188,15 @@ with open(log_path) as f:
                 'estimated_update_memory_and_check_stablizing': m.group(6), # Added to capture
                 'estimated_updating_indptr_and_stable_flag': m.group(7),    # Shifted to 7
                 'estimated_get_stable_flag': m.group(8),
+                'estimated_edge_feat_index': m.group(9),
+            })
+            continue
+        m = captured_prep_time_re.search(line)
+        if m and current is not None:
+            current.update({
+                'captured_prep_time': m.group(1),
+                'unaccounted_prep_time': m.group(3),
+                'unaccounted_prep_pct': m.group(4),
             })
             continue
 
@@ -206,7 +216,8 @@ fieldnames = ['epoch', 'train_loss', 'val_ap', 'val_auc',
               'mem_stab_prep_time', 'mem_stab_math_time', 'mem_stab_write_time',
               'flip_mean', 'flip_std', 'flip_min', 'flip_max', 'flip_batches',
               'best_epoch', 'sampling_time', 'updating_indptr_time', 'updating_stable_flag_time',
-              'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_update_memory_and_check_stablizing', 'estimated_updating_indptr_and_stable_flag', 'estimated_get_stable_flag']
+              'estimated_prep_to_dgl_blocks', 'estimated_prepare_input', 'estimated_mailbox_prep', 'estimated_post_to_dgl_blocks', 'estimated_mailbox_update', 'estimated_update_memory_and_check_stablizing', 'estimated_updating_indptr_and_stable_flag', 'estimated_get_stable_flag', 'estimated_edge_feat_index',
+              'captured_prep_time', 'unaccounted_prep_time', 'unaccounted_prep_pct']
 with open(csv_path, 'w', newline='') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
     w.writeheader()
