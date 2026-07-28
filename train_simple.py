@@ -1352,6 +1352,7 @@ for e in range(train_param['epoch']):
                     estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
 
                 else:
+                    t_batch_post_s = time.time()
                     t_forming_batch_s = time.time()
                     update_nodes_start = perf_counter()
                     color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
