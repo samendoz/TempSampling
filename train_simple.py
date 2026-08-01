@@ -594,6 +594,13 @@ for e in range(train_param['epoch']):
     flip_ratio_log = []
     prev_stable_flag = None
 
+    # PREFETCH: time the consumer spends blocked in producer.get_next() waiting for
+    # the next batch. Nonzero means the producer (sampling + to_dgl_blocks +
+    # prepare_input) is slower than the consumer (train + postprocess) and its cost
+    # is leaking into wall-clock time despite prefetching -- see producer.get_stats()
+    # printed at the end of each epoch for the breakdown of where that time goes.
+    queue_wait_time = 0
+
 
     ########################################
     # batching sampler purpose: check if we can use memorized results
@@ -659,7 +666,7 @@ for e in range(train_param['epoch']):
             global ptr_start, cur_batch
             while ptr_start < train_edge_end:
                 t_forming_batch_s = time.time()
-                ptr_end = color_sampler.sample_batch(
+                ptr_end, related_nodes = color_sampler.sample_batch(
                     training_df,
                     start_event_id=ptr_start,
                     batch_index=cur_batch,
@@ -668,7 +675,7 @@ for e in range(train_param['epoch']):
                 )
                 color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
                 batching_time_breakdown["sampling"] += time.time() - t_forming_batch_s
-                
+
                 rows = df.iloc[ptr_start:ptr_end]
 
                 if args.adaptive_update and adaptive_updater is not None:
@@ -684,8 +691,13 @@ for e in range(train_param['epoch']):
                 pos_root_end = root_nodes.shape[0] * 2 // 3
                 unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
 
-                # Yield raw inputs needed by the producer thread
-                yield rows, root_nodes, ts, ptr_end, unique_pos_root_nodes
+                # Yield raw inputs needed by the producer thread.
+                # related_nodes is the exact node set sample_batch() used to decide
+                # ptr_end -- it must be threaded through explicitly (not re-read from
+                # color_sampler.related_nodes later) because a later sample_batch()
+                # call for a subsequent batch can overwrite that side channel before
+                # this batch's update_node_indptr_direct() call happens on the consumer.
+                yield rows, root_nodes, ts, ptr_end, unique_pos_root_nodes, related_nodes
 
                 ptr_start = ptr_end
                 cur_batch += 1
@@ -710,9 +722,11 @@ for e in range(train_param['epoch']):
             
             t_training_start = time.time()
             t_tot_s = time.time()
-            
+
             #Pop pre constructed batch from the producer queue
+            t_queue_s = time.time()
             batch_item = producer.get_next()
+            queue_wait_time += time.time() - t_queue_s
             if batch_item is None:
                 break # No more batches to process
 
@@ -724,10 +738,14 @@ for e in range(train_param['epoch']):
             mfgs = batch_item['mfgs']
             ptr_end = batch_item['ptr_end']
             unique_pos_root_nodes = batch_item['unique_pos_root_nodes']
+            related_nodes = batch_item['related_nodes']
 
             # Update DGL blocks with latest mailbox memory
             if mailbox is not None:
+                t_mailbox_prep_s = perf_counter()
                 patch_mfg_mailbox(mailbox, batch_item)
+                estimated_prep_times["mailbox_prep"] += perf_counter() - t_mailbox_prep_s
+                time_prep += perf_counter() - t_mailbox_prep_s
 
             # Learning rate scaling
             if args.lr_scale:
@@ -781,7 +799,7 @@ for e in range(train_param['epoch']):
                 # ADD THIS BACK:
                 if args.adaptive_update and adaptive_updater is not None:
                     if stable_flag is not None and args.batch_level_log:
-                        print("node_stable_flag shape", stable_flag.shape, "stable count", torch.sum(stable_flag).item(), "total nodes", stable_flag.shape[0])[cite: 2]
+                        print("node_stable_flag shape", stable_flag.shape, "stable count", torch.sum(stable_flag).item(), "total nodes", stable_flag.shape[0])
                     adaptive_updater.set_stable_record(stable_flag)
 
                 if prev_stable_flag is not None:
@@ -789,11 +807,13 @@ for e in range(train_param['epoch']):
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
 
-                color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
+                color_sampler.update_node_indptr_direct(ptr_end, related_nodes)
                 color_sampler.update_node_stable_flag(stable_flag)
 
             else:
-                color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
+                color_sampler.update_node_indptr_direct(ptr_end, related_nodes)
+            prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
+            time_prep += time.time() - t_batch_post_s
 
             batch_time = time.time() - t_tot_s
             time_tot += batch_time
@@ -801,6 +821,25 @@ for e in range(train_param['epoch']):
             other_latency.append(batch_time - model_latency[-1])
 
         producer.stop()  # Stop the producer thread after all batches are processed
+
+        # PREFETCH: fold the producer thread's timings back into the existing
+        # estimated_prep_times/time_prep/time_sample accounting, so the "captured
+        # prep time" summary printed below (which previously always read 0 for this
+        # mode, since to_dgl_blocks/prepare_input moved to the producer thread) is
+        # meaningful again. See the explanation of queue_put_wait_time vs
+        # queue_wait_time in prefetch_pipeline.py for how to read these numbers.
+        producer_stats = producer.get_stats()
+        estimated_prep_times["initial_to_dgl_blocks"] += producer_stats['to_dgl_blocks_time']
+        estimated_prep_times["prepare_input"] += producer_stats['prepare_input_time']
+        time_sample += producer_stats['sampling_time']
+        time_prep += producer_stats['sampling_time'] + producer_stats['to_dgl_blocks_time'] + producer_stats['prepare_input_time']
+        print("\t[prefetch] producer: sampling {:.2f}s, to_dgl_blocks {:.2f}s, prepare_input {:.2f}s, "
+              "queue_put_wait {:.2f}s, batches_produced {}".format(
+            producer_stats['sampling_time'], producer_stats['to_dgl_blocks_time'], producer_stats['prepare_input_time'],
+            producer_stats['queue_put_wait_time'], producer_stats['batches_produced']))
+        print("\t[prefetch] consumer: queue_wait {:.2f}s ({} means producer kept up; {} means producer is the bottleneck "
+              "and its cost is leaking into wall-clock time despite prefetching)".format(
+            queue_wait_time, "~0", ">0"))
 
         if args.observing:
             node_stable_acc = mailbox.get_stablizing_memory_check_accuracy()
@@ -1061,7 +1100,7 @@ for e in range(train_param['epoch']):
                 ########################################
                 t_forming_batch_s = time.time()
                 # color_sampler.update_node_indptr(ptr_start, model.memory_updater.last_updated_nid)
-                ptr_end = color_sampler.sample_batch(training_df,
+                ptr_end, _ = color_sampler.sample_batch(training_df,
                                                     start_event_id=ptr_start,
                                                     batch_index=cur_batch,
                                                     minimal_batch_size=train_param['batch_size'],

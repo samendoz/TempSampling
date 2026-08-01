@@ -5,6 +5,7 @@ import pandas as pd
 import sys, time
 import pickle
 import os
+import threading
 
 
 class ColorBatchSampler():
@@ -103,6 +104,16 @@ class ColorBatchSampler():
         self.batch_index_list = []
         self.batch_index = 0
 
+        # PREFETCH: guards all reads/writes of node_stable_flag, related_nodes,
+        # batch_index_list and the underlying C++ color-ptr state. sample_batch()
+        # (called from the producer thread in the prefetch pipeline) and
+        # update_node_indptr_direct()/update_node_stable_flag() (called from the
+        # consumer thread) touch this shared state from two different threads;
+        # this lock makes each individual call atomic (no torn tensor reads/writes),
+        # though it does NOT guarantee sample_batch(N+1) sees update_node_stable_flag(N) --
+        # that ordering is only as fresh as the producer's queue depth allows.
+        self._state_lock = threading.Lock()
+
     def reset(self):
         self.reset_node_indptr()
         self.record_node_stable_flag()
@@ -155,12 +166,13 @@ class ColorBatchSampler():
         :param root_nodes: root_nodes is the nodes to update.
         :param node_stable_flag: node_stable_flag is the flag to update.
         """
-        with torch.no_grad():
-            if root_nodes is not None:
-                index = root_nodes.long().cpu()
-                self.node_stable_flag[index] = node_stable_flag
-            else:
-                self.node_stable_flag = node_stable_flag
+        with self._state_lock:
+            with torch.no_grad():
+                if root_nodes is not None:
+                    index = root_nodes.long().cpu()
+                    self.node_stable_flag[index] = node_stable_flag
+                else:
+                    self.node_stable_flag = node_stable_flag
         # print("node stable ratio: ", self.node_stable_flag.sum().item() / self.node_stable_flag.shape[0])
 
     def set_use_memory(self, use_memory):
@@ -252,18 +264,36 @@ class ColorBatchSampler():
     def update_node_indptr(self, recent_event_id, root_nodes):
         """
         Update the node indptr.
+
+        NOTE: relies on self.related_nodes, a single-slot side channel written by
+        sample_batch(). This pairing (one sample_batch() call, then one
+        update_node_indptr() call before the next sample_batch()) only holds when
+        both are called from the same thread in strict alternation. Do NOT use
+        this from the prefetch pipeline (producer/consumer threads) -- use
+        update_node_indptr_direct() instead, which takes an explicit root_nodes
+        value and never touches the side channel.
         """
-        # print("update node indptr")
-        # root_nodes = list(root_nodes)
-        if self.related_nodes is not None:
-            root_nodes = self.related_nodes
-            self.sampler.update_node_color_ptrs(recent_event_id, root_nodes)
-            self.related_nodes = None
-        else:
-            self.sampler.update_node_color_ptrs(recent_event_id, root_nodes)
+        with self._state_lock:
+            if self.related_nodes is not None:
+                root_nodes = self.related_nodes
+                self.sampler.update_node_color_ptrs(recent_event_id, root_nodes)
+                self.related_nodes = None
+            else:
+                self.sampler.update_node_color_ptrs(recent_event_id, root_nodes)
         # print("update node indptr done: ",self.sampler.current_node_color_ptrs, "sum", sum(self.sampler.current_node_color_ptrs))
         # input("check node indptr, press enter to continue...")
-    
+
+    def update_node_indptr_direct(self, recent_event_id, related_nodes):
+        """
+        Thread-safe variant for the prefetch pipeline: takes the exact root_nodes
+        computed by the matching sample_batch() call (threaded through explicitly,
+        e.g. via the producer's queue item) instead of relying on the
+        self.related_nodes side channel, which can be overwritten by a later
+        sample_batch() call before a slower consumer thread gets to it.
+        """
+        with self._state_lock:
+            self.sampler.update_node_color_ptrs(recent_event_id, related_nodes)
+
 
     def sample_batch(self, 
                      train_df,
@@ -277,56 +307,63 @@ class ColorBatchSampler():
         :param stable_flag: stable_flag is the flag to indicate whether we use node stable to decide if an event is stable.
         :param minimal_batch_size: minimal_batch_size is the minimal number of events to sample for each batch.
         :param step_size: step_size is the number of events to sample for each step.
-        :return: end_event_id
+        :return: (end_event_id, root_nodes) -- root_nodes is the exact node set this call
+            used to decide the boundary; callers that mutate color state afterward
+            (update_node_indptr_direct) should be given this value explicitly rather
+            than recomputing/re-reading it, since under the prefetch pipeline another
+            sample_batch() call for a later batch may run before a slower consumer
+            gets around to consuming this one.
         """
         st_t = time.time()
         checked_df = train_df.loc[start_event_id:start_event_id+step_size]
         # root node are nodes within the checked_df as src or dst
         root_nodes = np.unique(np.concatenate([checked_df['src'].values, checked_df['dst'].values])).astype(np.int32)
-        # print("root nodes: ", root_nodes, root_nodes.shape) 
+        # print("root nodes: ", root_nodes, root_nodes.shape)
         # input("check root nodes, press enter to continue...")
-        self.related_nodes = root_nodes
 
         # print("\t\tbatch", batch_index, "node stable ratio: ", self.node_stable_flag.sum().item() / self.node_stable_flag.shape[0])
         # input("check node stable flag, press enter to continue...")
         ed_t_root_nodes = time.time()
 
-        if self.use_memory:
-            end_event_id = self.batch_index_list[batch_index]
-        elif self.node_stable_mode:
-            # print("ok node stable mode")
-            node_stable_flag = self.node_stable_flag[root_nodes]
-            # get the unstable nodes
-            unstable_nodes = root_nodes[~node_stable_flag]
-            # print("\t\tunstable nodes: ", len(unstable_nodes), "root nodes: ", len(root_nodes))
-            num_colors = self.color_decay(batch_index)
-            # print("\tnum colors: ", num_colors, "remained_node_ratio: ", len(unstable_nodes) / len(root_nodes))
-            end_event_id = self.sampler.sample_batch(unstable_nodes, 
-                                                    start_event_id, 
-                                                    self.node_stable_flag, 
-                                                    num_colors,
-                                                    minimal_batch_size, 
-                                                    step_size,
-                                                    self.node_stable_mode)
-            self.batch_index_list.append(end_event_id)
-        else:
-            num_colors = self.color_decay(batch_index)
-            # print("num colors: ", num_colors, "self.num_colors: ", self.num_colors)
-            end_event_id = self.sampler.sample_batch(root_nodes, 
-                                                     start_event_id, 
-                                                     self.node_stable_flag, 
-                                                     num_colors,
-                                                     minimal_batch_size, 
-                                                     step_size,
-                                                     self.node_stable_mode)
-            self.batch_index_list.append(end_event_id)
+        with self._state_lock:
+            self.related_nodes = root_nodes
+
+            if self.use_memory:
+                end_event_id = self.batch_index_list[batch_index]
+            elif self.node_stable_mode:
+                # print("ok node stable mode")
+                node_stable_flag = self.node_stable_flag[root_nodes]
+                # get the unstable nodes
+                unstable_nodes = root_nodes[~node_stable_flag]
+                # print("\t\tunstable nodes: ", len(unstable_nodes), "root nodes: ", len(root_nodes))
+                num_colors = self.color_decay(batch_index)
+                # print("\tnum colors: ", num_colors, "remained_node_ratio: ", len(unstable_nodes) / len(root_nodes))
+                end_event_id = self.sampler.sample_batch(unstable_nodes,
+                                                        start_event_id,
+                                                        self.node_stable_flag,
+                                                        num_colors,
+                                                        minimal_batch_size,
+                                                        step_size,
+                                                        self.node_stable_mode)
+                self.batch_index_list.append(end_event_id)
+            else:
+                num_colors = self.color_decay(batch_index)
+                # print("num colors: ", num_colors, "self.num_colors: ", self.num_colors)
+                end_event_id = self.sampler.sample_batch(root_nodes,
+                                                         start_event_id,
+                                                         self.node_stable_flag,
+                                                         num_colors,
+                                                         minimal_batch_size,
+                                                         step_size,
+                                                         self.node_stable_mode)
+                self.batch_index_list.append(end_event_id)
 
         # print("\tsample batch time: ", time.time() - ed_t_root_nodes, "get root nodes time: ", ed_t_root_nodes - st_t)
 
         # print("end event id: ", end_event_id)
         # input("check end event id, press enter to continue...")
-        return end_event_id
-            
+        return end_event_id, root_nodes
+
 class MultiColorBatchSampler(ColorBatchSampler):
     """
     MultiColorBatchSampler is a class that sample
