@@ -1,7 +1,6 @@
-import torch
 import queue
 import threading
-from utils import to_dgl_blocks, prepare_input
+from utils import to_dgl_blocks, node_to_dgl_blocks, prepare_input
 
 class PrefetchProducer:
     def __init__(self, sampler, sample_param, gnn_param, node_feats, edge_feats, 
@@ -19,14 +18,12 @@ class PrefetchProducer:
         self.stopped = False
 
     def _producer_loop(self, batch_generator):
-        """
-        Background worker that samples and builds DGL blocks for batch n+1.
-        """
         for batch_data in batch_generator:
             if self.stopped:
                 break
 
-            rows, root_nodes, ts = batch_data
+            # FIX: Unpack all 5 items yielded by batch_generator_fn()
+            rows, root_nodes, ts, ptr_end, unique_pos_root_nodes = batch_data
 
             # 1. Graph Sampling
             if self.sampler is not None:
@@ -43,23 +40,24 @@ class PrefetchProducer:
             if self.gnn_param['arch'] != 'identity':
                 mfgs = to_dgl_blocks(ret, self.sample_param['history'], cuda=self.all_gpu)
             else:
-                from utils import node_to_dgl_blocks
                 mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=self.all_gpu)
 
-            # 3. Initial Input Prep (Features)
+            # 3. Input Feature Prep
             mfgs = prepare_input(mfgs, self.node_feats, self.edge_feats, combine_first=self.combine_first)
 
-            # Put pre-constructed item into queue
+            # Package items into the item dictionary
             item = {
                 'rows': rows,
                 'root_nodes': root_nodes,
                 'ts': ts,
                 'ret': ret,
-                'mfgs': mfgs
+                'mfgs': mfgs,
+                'ptr_end': ptr_end,
+                'unique_pos_root_nodes': unique_pos_root_nodes
             }
             self.queue.put(item)
 
-        self.queue.put(None)  # Sentinel to mark end of batches
+        self.queue.put(None)  # End sentinel
 
     def start(self, batch_generator):
         self.stopped = False
@@ -78,10 +76,6 @@ class PrefetchProducer:
                 break
 
 
-def patch_mfg_mailbox(mailbox, mfg_batch):
-    """
-    Patches pre-fetched DGL blocks with the latest MailBox states right before training.
-    """
+def patch_mfg_mailbox(mailbox, batch_item):
     if mailbox is not None:
-        # Repopulate updated mailbox features into mfgs[0]
-        mailbox.prep_input_mails(mfg_batch['mfgs'][0])
+        mailbox.prep_input_mails(batch_item['mfgs'][0])
