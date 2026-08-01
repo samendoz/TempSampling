@@ -1,6 +1,7 @@
 import argparse
 import os, sys, math, yaml
 from time import perf_counter
+from prefetch_pipeline import PrefetchProducer, patch_mfg_mailbox
 
 
 parser=argparse.ArgumentParser()
@@ -640,7 +641,6 @@ for e in range(train_param['epoch']):
         if mailbox is not None:
             mailbox.set_stablize_recorder(window_size=SIM_WINDOW)
         ptr_start = 0
-        ptr_end = ptr_start
         batch_count = 0
         final_group_idx = np.zeros(train_edge_end)
 
@@ -654,140 +654,95 @@ for e in range(train_param['epoch']):
         color_counts_dict = dict()
         batch_max_color_counts = list()
 
-        _use_prefetch = getattr(args, 'prefetch', False) and sampler is not None
-        prefetch = PrefetchManager(sampler) if _use_prefetch else None
+        # A. Define the Batch Generator for the Producer Thread
+        def batch_generator_fn():
+            global ptr_start, cur_batch
+            while ptr_start < train_edge_end:
+                t_forming_batch_s = time.time()
+                ptr_end = color_sampler.sample_batch(
+                    training_df,
+                    start_event_id=ptr_start,
+                    batch_index=cur_batch,
+                    minimal_batch_size=train_param['batch_size'],
+                    step_size=MAX_BACTH_SIZE
+                )
+                color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
+                batching_time_breakdown["sampling"] += time.time() - t_forming_batch_s
+                
+                rows = df.iloc[ptr_start:ptr_end]
 
-        while ptr_start < train_edge_end:
-            ########################################
-            # batching block: moving ptrs and sample batch
-            ########################################
-            t_forming_batch_s = time.time()
-            ptr_end = color_sampler.sample_batch(training_df,
-                                                 start_event_id=ptr_start,
-                                                 batch_index=cur_batch,
-                                                 minimal_batch_size=train_param['batch_size'],
-                                                 step_size=MAX_BACTH_SIZE)
-            color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-            batching_time_breakdown["sampling"] += time.time() - t_forming_batch_s
+                if args.adaptive_update and adaptive_updater is not None:
+                    try:
+                        rows = adaptive_updater.elastic_row_filer(rows)
+                    except Exception as e:
+                        print("adaptive_updater error:", e)
+                        rows = rows
+
+                root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
+                ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+
+                pos_root_end = root_nodes.shape[0] * 2 // 3
+                unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
+
+                # Yield raw inputs needed by the producer thread
+                yield rows, root_nodes, ts, ptr_end, unique_pos_root_nodes
+
+                ptr_start = ptr_end
+                cur_batch += 1
+
+        # B. Instantiate & Start the Background Producer Thread
+        producer = PrefetchProducer(
+            sampler=sampler,
+            sample_param=sample_param,
+            gnn_param=gnn_param,
+            node_feats=node_feats,
+            edge_feats=edge_feats,
+            combine_first=combine_first,
+            all_gpu=ALL_GPU,
+            queue_size=2
+        )
+
+        producer.start(batch_generator_fn())
 
 
-            #########################################
-            # model training block
-            #########################################
-
-            #########################################
-            # EXPERIMENTAL: adaptive_updater (record up to date stable flag)---get node stable flag indicating whether the node is stable
-            ########################################
-            if args.adaptive_update and adaptive_updater is not None:
-                node_stable_flag = mailbox.get_full_node_stable_flag() if mailbox is not None else None
-                if node_stable_flag is not None and args.batch_level_log:
-                    print("node_stable_flag shape", node_stable_flag.shape, "stable count", torch.sum(node_stable_flag).item(), "total nodes", node_stable_flag.shape[0])
-                adaptive_updater.set_stable_record(node_stable_flag)
-            #########################################
+        # C. Main Consumer Loop (Training Stream)
+        while True:
             
-            
-            cur_batch += 1
-            # print("batch {}, cur batch count {}".format(cur_batch, ptr_end - ptr_start))
             t_training_start = time.time()
+            t_tot_s = time.time()
             
-            # update batch count
-            rows = df.iloc[ptr_start:ptr_end]
-            final_group_idx[ptr_start:ptr_end] = batch_count
-            batch_count += 1
-            total_batch_count += 1
-            total_batch_sum += len(rows)
-            batch_sizes.append(len(rows))
+            #Pop pre constructed batch from the producer queue
+            batch_item = producer.get_next()
+            if batch_item is None:
+                break # No more batches to process
+
+
+            rows = batch_item['rows']
+            root_nodes = batch_item['root_nodes']
+            ts = batch_item['ts']
+            ret = batch_item['ret']
+            mfgs = batch_item['mfgs']
+            ptr_end = batch_item['ptr_end']
+            unique_pos_root_nodes = batch_item['unique_pos_root_nodes']
+
+            # Update DGL blocks with latest mailbox memory
+            if mailbox is not None:
+                patch_mfg_mailbox(mailbox, batch_item)
+
+            # Learning rate scaling
             if args.lr_scale:
                 lr = min(train_param['lr'] * len(rows) / train_param['batch_size'] * LR_SCALE_FACTOR, train_param['lr'] * LR_SCALE_CEILING)
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
+
+            batch_count += 1
+            total_batch_count += 1
+            total_batch_sum += len(rows)
+            batch_sizes.append(len(rows))
+
             color_time_breakdown["others"] += time.time() - t_training_start
 
-            # model forward
-            t_tot_s = time.time()
-            #########################################
-            # EXPERIMENTAL: adaptive_updater(reduce stable root nodes)---based on node stable flag, we can reduce the number of root nodes
-            ########################################
-            if args.adaptive_update and adaptive_updater is not None:
-                try:
-                    rows = adaptive_updater.elastic_row_filer(rows)
-                except Exception as e:
-                    print("adaptive_updater error:", e)
-                    rows = rows
-            #########################################
-
-            root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-            ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-
-            #########################################
-            # EXPERIMENTAL: adaptive_updater(not used for now)---based on node stable flag, we can reduce the number of root nodes
-            ########################################
-            # if args.adaptive_update is not None:
-            #     full_root_nodes = root_nodes.copy()
-            #     try:
-            #         root_nodes, pos_root_end_reduced = adaptive_updater(root_nodes)
-            #     except Exception as e:
-            #         print("adaptive_updater error:", e)
-            #         root_nodes = root_nodes
-            #########################################
-
-            pos_root_end = root_nodes.shape[0] * 2 // 3
-            # EXPERIMENTAL(not used for now): adaptive_updater---minors
-            # if pos_root_end_reduced is not None:
-            #     pos_root_end = pos_root_end_reduced
-
-            # kick off sampler in background — unique_pos computation below overlaps with it
-            if prefetch is not None:
-                _no_neg = 'no_neg' in sample_param and sample_param['no_neg']
-                prefetch.schedule(
-                    root_nodes[:pos_root_end] if _no_neg else root_nodes,
-                    ts[:pos_root_end] if _no_neg else ts,
-                )
-
-            unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
-            print(f'batch node stats: batch:{cur_batch} batch_size:{root_nodes.shape[0]} unique_pos_nodes:{unique_pos_root_nodes.shape[0]}')
-
-            if sampler is not None:
-                ret = prefetch.get() if prefetch is not None else None
-                if ret is None:
-                    if 'no_neg' in sample_param and sample_param['no_neg']:
-                        # EXPERIMENTAL(not used for now): adaptive_updater---minors
-                        # if pos_root_end_reduced is not None:
-                        #     pos_root_end = pos_root_end_reduced
-                        # else:
-                        pos_root_end = root_nodes.shape[0] * 2 // 3
-                        sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                    else:
-                        sampler.sample(root_nodes, ts)
-                    ret = sampler.get_ret()
-                time_sample += time.time() - t_tot_s
-
-
-            t_prep_s = time.time()
-
-            initial_dgl_block_start = perf_counter()
-            if gnn_param['arch'] != 'identity':
-                mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=ALL_GPU)
-            else:
-                mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
-            initial_dgl_block_end = perf_counter()
-            estimated_prep_times["initial_to_dgl_blocks"] += (initial_dgl_block_end - initial_dgl_block_start)
-            prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-            
-            t_prepare_s = time.time()
-
-            prepare_input_start = perf_counter()
-            mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
-            prepare_input_end = perf_counter()
-            prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
-            estimated_prep_times["prepare_input"] += (prepare_input_end - prepare_input_start)
-
-            prep_input_mails_start = perf_counter()  
-            if mailbox is not None:
-                mailbox.prep_input_mails(mfgs[0])
-            prep_input_mails_end = perf_counter()
-            estimated_prep_times["mailbox_prep"] += (prep_input_mails_end - prep_input_mails_start)
-            time_prep += time.time() - t_prep_s
+            # Model Forward
 
             t_model_s = time.time()
             optimizer.zero_grad()
@@ -795,124 +750,58 @@ for e in range(train_param['epoch']):
             pred_pos, pred_neg = model(mfgs)
             loss = creterion(pred_pos, torch.ones_like(pred_pos))
             loss += creterion(pred_neg, torch.zeros_like(pred_neg))
-            # total_loss += float(loss) * train_param['batch_size']
             total_loss += float(loss) * len(rows)
             loss.backward()
             optimizer.step()
             nvtx.end_range(rng)
             time_model += time.time() - t_model_s
-
-            #restart the timer for post processing after model update
-            t_prep_s = time.time()
             model_latency.append(time.time() - t_tot_s)
 
-
-            ########################################
-            # observing the batch---size, index and losses
-            ########################################
-            if args.batch_level_log:
-                print("\tbatch {}, cur batch count {}".format(cur_batch, len(rows)), "loss", float(loss))
-
-
-            ########################################
-            # batch level processing observation
-            ########################################
-
+            # Post-processing Step (Mailbox and Memory Update for Batch N)
             t_batch_post_s = time.time()
             if mailbox is not None:
-                edge_feat_index_start = perf_counter()
                 eid = rows['Unnamed: 0'].values
                 mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
-                edge_feat_index_end = perf_counter()
-                estimated_prep_times["edge_feat_index"] += (edge_feat_index_end - edge_feat_index_start)
+            
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':
-                    post_dgl_blocks_start = perf_counter()
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
-                    post_dgl_blocks_end = perf_counter()
-                    prep_time_breakdown["to_dgl_blocks"] += time.time() - t_batch_post_s
-                    estimated_prep_times["post_to_dgl_blocks"] += (post_dgl_blocks_end - post_dgl_blocks_start)
-                else:
-                    block = None
 
-                mailbox_update_start = perf_counter()
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
-                mailbox_update_end = perf_counter()
-                estimated_prep_times["mailbox_update"] += (mailbox_update_end - mailbox_update_start)
+                mailbox.update_memory_and_check_stablizing(
+                    model.memory_updater.last_updated_nid,
+                    model.memory_updater.last_updated_memory,
+                    root_nodes,
+                    model.memory_updater.last_updated_ts,
+                    threshold=SIM_THRESHOLD, any=SIM_ANY
+                )
 
-                mailbox_update_memory_start = perf_counter()
-                mailbox.update_memory_and_check_stablizing(model.memory_updater.last_updated_nid,
-                                                           model.memory_updater.last_updated_memory,
-                                                           root_nodes,
-                                                           model.memory_updater.last_updated_ts,
-                                                           threshold=SIM_THRESHOLD, any=SIM_ANY)
-                mailbox_update_memory_end = perf_counter()
-                estimated_prep_times["update_memory_and_check_stablizing"] += (mailbox_update_memory_end - mailbox_update_memory_start)
-
-                get_stable_flag_start = perf_counter()
                 stable_flag = mailbox.get_full_node_stable_flag()
+
+                # ADD THIS BACK:
+                if args.adaptive_update and adaptive_updater is not None:
+                    if stable_flag is not None and args.batch_level_log:
+                        print("node_stable_flag shape", stable_flag.shape, "stable count", torch.sum(stable_flag).item(), "total nodes", stable_flag.shape[0])[cite: 2]
+                    adaptive_updater.set_stable_record(stable_flag)
+
                 if prev_stable_flag is not None:
                     flips = (stable_flag != prev_stable_flag).sum().item()
                     flip_ratio_log.append(flips / stable_flag.shape[0])
                 prev_stable_flag = stable_flag.clone()
-                get_stable_flag_end = perf_counter()
-                estimated_prep_times["get_stable_flag"] += (get_stable_flag_end - get_stable_flag_start)
-                
-                t_forming_batch_s = time.time()
-                update_nodes_start = perf_counter()
-                color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
-                batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
-                t_flag_update_s = time.time()
-                color_sampler.update_node_stable_flag(stable_flag)
-                color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-                batching_time_breakdown["updating_stable_flag"] += time.time() - t_flag_update_s
-                update_nodes_end = perf_counter()
 
-                estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
-            else:
-                t_forming_batch_s = time.time()
-                update_nodes_start = perf_counter()
                 color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
-                update_nodes_end = perf_counter()
-                color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-                batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
-                estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
-            
-            time_prep += time.time() - t_prep_s
+                color_sampler.update_node_stable_flag(stable_flag)
+
+            else:
+                color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
+
             batch_time = time.time() - t_tot_s
             time_tot += batch_time
-            color_time_breakdown["model training"] += batch_time
-
             batch_latency.append(batch_time)
             other_latency.append(batch_time - model_latency[-1])
 
-            t_record_memory_s = time.time()
-            # record recent memory
-            # if mailbox is not None:
-            #     if args.observing:
-            #         mailbox.validate_memory_history(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts, threshold=SIM_THRESHOLD, any=SIM_ANY)
-            #         # cur_node_acc = mailbox.get_stablizing_memory_check_accuracy()
-            #         # print("****************cur_node_acc****************", cur_node_acc)
-            #     mailbox.record_recent_memory_history(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
+        producer.stop()  # Stop the producer thread after all batches are processed
 
-            # # update ptrs
-            ptr_start = ptr_end
-            t_training_end = time.time()
-            color_time_breakdown["record memory"] += t_training_end - t_record_memory_s
-            # ptr_end = min(ptr_start + train_param['batch_size'], train_edge_end)
-            # # check stablized input
-            # while ptr_end < train_edge_end:
-            #     src_idx = df.iloc[ptr_end].src.astype(np.int32)
-            #     dst_idx = df.iloc[ptr_end].dst.astype(np.int32)
-            #     nid = torch.tensor([src_idx, dst_idx], dtype=torch.int64)
-            #     if mailbox.is_node_memory_stable(nid,threshold=SIM_THRESHOLD,any=SIM_ANY):
-            #         ptr_end += 1
-            #     else:
-            #         # print("batch size", ptr_end - ptr_start)
-            #         break
-            
-        # node_stable, node_check = mailbox.get_node_stable_ratio()
-        # event_stable, event_check = mailbox.get_event_stable_ratio()
         if args.observing:
             node_stable_acc = mailbox.get_stablizing_memory_check_accuracy()
         if args.profile_stable:
@@ -945,9 +834,7 @@ for e in range(train_param['epoch']):
         print("\tcaptured prep time: {:.2f}s, time_prep: {:.2f}s, unaccounted prep time: {:.2f}s ({:.1%})".format(
             captured_prep_time, time_prep, time_prep - captured_prep_time,
             (time_prep - captured_prep_time) / time_prep if time_prep > 0 else 0))
-        if prefetch is not None:
-            print("\tprefetch hit rate: {:.1%}  (hits={}, misses={})".format(prefetch.hit_rate(), prefetch.n_hits, prefetch.n_misses))
-            prefetch.clear()
+        
         if args.observing:
             print("****************node_stable_acc****************", node_stable_acc)
         
