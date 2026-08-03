@@ -659,6 +659,8 @@ class MailBox():
             time_mailbox_prep_start = perf_counter()
             num_true_edges = root_nodes.shape[0] // (neg_samples + 2)
 
+            print(f"[update_mailbox device check] memory.device={memory.device} -> self.device={self.device} "
+                  f"(mailbox.device={self.mailbox.device})")
             cuda_time_start = perf_counter()
             memory = memory.to(self.device)
             if edge_feats is not None:
