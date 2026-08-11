@@ -1049,6 +1049,22 @@ for e in range(train_param['epoch']):
         training_df = df[:train_edge_end]
         cur_batch = 0
 
+        # PREFETCH: one producer reused across all chunks in this epoch (its .stats
+        # accumulate across .start()/.stop() cycles, so the epoch-level fold-in
+        # after the chunk loop below reflects the whole epoch, same convention as
+        # batch_stable_freezing). Each chunk gets its own generator/thread via
+        # producer.start(batch_generator_fn()) once that chunk's coloring is done.
+        producer = PrefetchProducer(
+            sampler=sampler,
+            sample_param=sample_param,
+            gnn_param=gnn_param,
+            node_feats=node_feats,
+            edge_feats=edge_feats,
+            combine_first=combine_first,
+            all_gpu=ALL_GPU,
+            queue_size=2
+        )
+
         print("chunk size", chunk_size, "chunk num", chunk_num)
 
         for i in range(chunk_num):
@@ -1092,107 +1108,114 @@ for e in range(train_param['epoch']):
 
             ptr_start = st_row
             ptr_end = ptr_start
-            
 
-            while ptr_start < ed_row:
-                ########################################
-                # moving ptrs and sample batch
-                ########################################
-                t_forming_batch_s = time.time()
-                # color_sampler.update_node_indptr(ptr_start, model.memory_updater.last_updated_nid)
-                ptr_end, _ = color_sampler.sample_batch(training_df,
-                                                    start_event_id=ptr_start,
-                                                    batch_index=cur_batch,
-                                                    minimal_batch_size=train_param['batch_size'],
-                                                    step_size=MAX_BACTH_SIZE)
-                ptr_end = min(ptr_end, ed_row) # make sure the ptr_end is within the chunk
-                # print("batch {}, cur batch count {}".format(cur_batch, ptr_end - ptr_start), "ptr_start", ptr_start, "ptr_end", ptr_end, "start row", st_row, "end row", ed_row)
-                color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-                batching_time_breakdown["sampling"] += time.time() - t_forming_batch_s
-                
-                #########################################
-                # EXPERIMENTAL: adaptive_updater (record up to date stable flag)---get node stable flag indicating whether the node is stable
-                ########################################
-                if args.adaptive_update and adaptive_updater is not None:
-                    node_stable_flag = mailbox.get_full_node_stable_flag() if mailbox is not None else None
-                    if node_stable_flag is not None and args.batch_level_log:
-                        print("node_stable_flag shape", node_stable_flag.shape, "stable count", torch.sum(node_stable_flag).item(), "total nodes", node_stable_flag.shape[0])
-                    adaptive_updater.set_stable_record(node_stable_flag)
-                #########################################
+            # A. Per-chunk batch generator for the producer thread. Redefined each
+            # chunk iteration so it closes over this chunk's ed_row; ptr_start and
+            # cur_batch are script-level counters shared across chunks, same
+            # convention as the batch_stable_freezing pipeline.
+            def batch_generator_fn():
+                global ptr_start, cur_batch
+                while ptr_start < ed_row:
+                    ########################################
+                    # moving ptrs and sample batch
+                    ########################################
+                    t_forming_batch_s = time.time()
+                    ptr_end, related_nodes = color_sampler.sample_batch(training_df,
+                                                        start_event_id=ptr_start,
+                                                        batch_index=cur_batch,
+                                                        minimal_batch_size=train_param['batch_size'],
+                                                        step_size=MAX_BACTH_SIZE)
+                    ptr_end = min(ptr_end, ed_row) # make sure the ptr_end is within the chunk
+                    color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
+                    batching_time_breakdown["sampling"] += time.time() - t_forming_batch_s
 
+                    #########################################
+                    # EXPERIMENTAL: adaptive_updater (record up to date stable flag)---get node stable flag indicating whether the node is stable
+                    ########################################
+                    if args.adaptive_update and adaptive_updater is not None:
+                        node_stable_flag = mailbox.get_full_node_stable_flag() if mailbox is not None else None
+                        if node_stable_flag is not None and args.batch_level_log:
+                            print("node_stable_flag shape", node_stable_flag.shape, "stable count", torch.sum(node_stable_flag).item(), "total nodes", node_stable_flag.shape[0])
+                        adaptive_updater.set_stable_record(node_stable_flag)
+                    #########################################
 
-                cur_batch += 1
-                # print("batch {}, cur batch count {}".format(cur_batch, ptr_end - ptr_start))
+                    cur_batch += 1
+
+                    rows = df.iloc[ptr_start:ptr_end]
+
+                    #########################################
+                    # EXPERIMENTAL: adaptive_updater(reduce stable root nodes)---based on node stable flag, we can reduce the number of root nodes
+                    ########################################
+                    if args.adaptive_update and adaptive_updater is not None:
+                        try:
+                            rows = adaptive_updater.elastic_row_filer(rows)
+                        except Exception as e:
+                            print("adaptive_updater error:", e)
+                            rows = rows
+                    #########################################
+                    root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
+                    ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                    pos_root_end = root_nodes.shape[0] * 2 // 3
+                    unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
+                    print(f'batch node stats: batch:{cur_batch} batch_size:{root_nodes.shape[0]} unique_pos_nodes:{unique_pos_root_nodes.shape[0]}')
+
+                    # Yield raw inputs needed by the producer thread. related_nodes is
+                    # the exact node set sample_batch() used to decide ptr_end -- must
+                    # be threaded through explicitly (see
+                    # color_sampler.update_node_indptr_direct()) rather than re-read
+                    # later, since a later sample_batch() call (for a subsequent chunk
+                    # batch) can overwrite that side channel before a slower consumer
+                    # gets to this one.
+                    yield rows, root_nodes, ts, ptr_end, unique_pos_root_nodes, related_nodes
+
+                    ptr_start = ptr_end
+
+            # B. Start the background producer thread for this chunk
+            producer.start(batch_generator_fn())
+
+            # C. Main Consumer Loop (Training Stream) for this chunk
+            while True:
                 t_training_start = time.time()
-                
-                # update batch count
-                rows = df.iloc[ptr_start:ptr_end]
-                final_group_idx[ptr_start:ptr_end] = batch_count
+                t_tot_s = time.time()
+
+                t_queue_s = time.time()
+                batch_item = producer.get_next()
+                queue_wait_time += time.time() - t_queue_s
+                if batch_item is None:
+                    break # No more batches in this chunk
+
+                rows = batch_item['rows']
+                root_nodes = batch_item['root_nodes']
+                ts = batch_item['ts']
+                ret = batch_item['ret']
+                mfgs = batch_item['mfgs']
+                ptr_end = batch_item['ptr_end']
+                unique_pos_root_nodes = batch_item['unique_pos_root_nodes']
+                related_nodes = batch_item['related_nodes']
+
+                # update batch count. Index by rows.index rather than a raw
+                # ptr_start:ptr_end slice: adaptive_update's elastic_row_filer may
+                # have dropped rows from this range, and the shared ptr_start
+                # counter may already have moved on to a later batch by the time
+                # this consumer iteration runs.
+                final_group_idx[rows.index.to_numpy()] = batch_count
                 batch_count += 1
                 total_batch_count += 1
                 total_batch_sum += len(rows)
                 batch_sizes.append(len(rows))
-                # print("batch {}, cur batch count {}".format(cur_batch, len(rows)))
                 if args.lr_scale:
                     lr = min(train_param['lr'] * len(rows) / train_param['batch_size'] * LR_SCALE_FACTOR, train_param['lr'] * LR_SCALE_CEILING)
-                    # print("batch size", len(rows), "preset batch size", train_param['batch_size'], "lr", lr)
                     for param_group in optimizer.param_groups:
                         param_group['lr'] = lr
                 color_time_breakdown["others"] += time.time() - t_training_start
 
-                # model forward
-                t_tot_s = time.time()
-                #########################################
-                # EXPERIMENTAL: adaptive_updater(reduce stable root nodes)---based on node stable flag, we can reduce the number of root nodes
-                ########################################
-                if args.adaptive_update and adaptive_updater is not None:
-                    try:
-                        rows = adaptive_updater.elastic_row_filer(rows)
-                    except Exception as e:
-                        print("adaptive_updater error:", e)
-                        rows = rows
-                #########################################
-                root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-                ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-                pos_root_end = root_nodes.shape[0] * 2 // 3
-                unique_pos_root_nodes = np.unique(root_nodes[:pos_root_end])
-                print(f'batch node stats: batch:{cur_batch} batch_size:{root_nodes.shape[0]} unique_pos_nodes:{unique_pos_root_nodes.shape[0]}')
-
-                if sampler is not None:
-                    if 'no_neg' in sample_param and sample_param['no_neg']:
-                        pos_root_end = root_nodes.shape[0] * 2 // 3
-                        sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                    else:
-                        sampler.sample(root_nodes, ts)
-                    ret = sampler.get_ret()
-                    # time_sample += ret[0].sample_time()
-                    time_sample += time.time() - t_tot_s
-                t_prep_s = time.time()
-                # if e == 15:
-                #     to_dgl_blocks_ob(ret, sample_param['history'])
-                initial_dgl_block_start = perf_counter()
-                if gnn_param['arch'] != 'identity':
-                    mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=ALL_GPU)
-                else:
-                    mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=ALL_GPU)
-                initial_dgl_block_end = perf_counter()
-                estimated_prep_times["initial_to_dgl_blocks"] += (initial_dgl_block_end - initial_dgl_block_start)
-                prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
-
-                t_prepare_s = time.time()
-                prepare_input_start = perf_counter()
-                mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
-                prepare_input_end = perf_counter()
-                prep_time_breakdown["prepare_input"] += time.time() - t_prepare_s
-                estimated_prep_times["prepare_input"] += (prepare_input_end - prepare_input_start)
-
-                prep_input_mails_start = perf_counter()
+                # Update DGL blocks with latest mailbox memory
                 if mailbox is not None:
-                    mailbox.prep_input_mails(mfgs[0])
-                prep_input_mails_end = perf_counter()
-                estimated_prep_times["mailbox_prep"] += (prep_input_mails_end - prep_input_mails_start)
-                time_prep += time.time() - t_prep_s
-                
+                    t_mailbox_prep_s = perf_counter()
+                    patch_mfg_mailbox(mailbox, batch_item)
+                    estimated_prep_times["mailbox_prep"] += perf_counter() - t_mailbox_prep_s
+                    time_prep += perf_counter() - t_mailbox_prep_s
+
                 ########################################
                 # check input mails
                 ########################################
@@ -1202,13 +1225,11 @@ for e in range(train_param['epoch']):
                 pred_pos, pred_neg = model(mfgs)
                 loss = creterion(pred_pos, torch.ones_like(pred_pos))
                 loss += creterion(pred_neg, torch.zeros_like(pred_neg))
-                # total_loss += float(loss) * train_param['batch_size']
                 total_loss += float(loss) * len(rows)
                 loss.backward()
                 optimizer.step()
                 nvtx.end_range(rng)
                 time_model += time.time() - t_model_s
-                t_prep_s = time.time()
                 model_latency.append(time.time() - t_tot_s)
 
                 ########################################
@@ -1217,12 +1238,12 @@ for e in range(train_param['epoch']):
                 if args.batch_level_log:
                     print("\tbatch {}, cur batch count {}".format(cur_batch, len(rows)), "loss", float(loss))
 
-
                 ########################################
                 # batch level processing observation
                 ########################################
 
                 if mailbox is not None:
+                    t_prep_s = time.time()
                     edge_feat_index_start = perf_counter()
                     eid = rows['Unnamed: 0'].values
                     mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
@@ -1233,10 +1254,8 @@ for e in range(train_param['epoch']):
                         post_dgl_blocks_start = perf_counter()
                         block = to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=ALL_GPU)[0][0]
                         post_dgl_blocks_end = perf_counter()
-                        prep_time_breakdown["to_dgl_blocks"] += time.time() - t_prep_s
                         estimated_prep_times["post_to_dgl_blocks"] += (post_dgl_blocks_end - post_dgl_blocks_start)
 
-                    t_prep_mailbox_s = time.time()
                     mailbox_update_start = perf_counter()
                     mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
                     mailbox_update_end = perf_counter()
@@ -1262,31 +1281,34 @@ for e in range(train_param['epoch']):
 
                     t_batch_post_s = time.time()
 
-                    t_forming_batch_s = time.time()
-                    # print("in memory", model.memory_updater.last_updated_nid.shape, "root_nodes", root_nodes.shape, "stable_flag", stable_flag)
-                    # input("Press Enter to continue...")
+                    # NOTE: the original synchronous version of this mode also folded
+                    # this span into color_time_breakdown["forming_batch"] -- the same
+                    # key the producer's sample_batch() timing above writes to. That
+                    # was a harmless double-count when both ran on one thread, but is a
+                    # genuine cross-thread race now that sample_batch() runs in the
+                    # producer. Dropped here; batching_time_breakdown["updating_indptr"]/
+                    # ["updating_stable_flag"] already capture this span exactly, so no
+                    # information is lost, just no longer double-booked under
+                    # "forming_batch".
                     update_nodes_start = perf_counter()
-                    color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
-                    batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
-                    t_flag_update_s = time.time()
+                    color_sampler.update_node_indptr_direct(ptr_end, related_nodes)
+                    batching_time_breakdown["updating_indptr"] += perf_counter() - update_nodes_start
+                    t_flag_update_s = perf_counter()
                     color_sampler.update_node_stable_flag(stable_flag)
-                    # mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
-                    color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-                    batching_time_breakdown["updating_stable_flag"] += time.time() - t_flag_update_s
+                    batching_time_breakdown["updating_stable_flag"] += perf_counter() - t_flag_update_s
                     update_nodes_end = perf_counter()
 
                     estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
 
                 else:
+                    t_prep_s = time.time()
                     t_batch_post_s = time.time()
-                    t_forming_batch_s = time.time()
                     update_nodes_start = perf_counter()
-                    color_sampler.update_node_indptr(ptr_end, unique_pos_root_nodes)
+                    color_sampler.update_node_indptr_direct(ptr_end, related_nodes)
                     update_nodes_end = perf_counter()
-                    color_time_breakdown["forming_batch"] += time.time() - t_forming_batch_s
-                    batching_time_breakdown["updating_indptr"] += time.time() - t_forming_batch_s
+                    batching_time_breakdown["updating_indptr"] += update_nodes_end - update_nodes_start
                     estimated_prep_times["updating_indptr_and_stable_flag"] += (update_nodes_end - update_nodes_start)
-                    
+
                 prep_time_breakdown["batch_postprocessing"] += time.time() - t_batch_post_s
                 time_prep += time.time() - t_prep_s
                 batch_time = time.time() - t_tot_s
@@ -1297,12 +1319,7 @@ for e in range(train_param['epoch']):
                 batch_latency.append(batch_time)
                 other_latency.append(batch_time - model_latency[-1])
 
-                t_record_memory_s = time.time()
-
-                # # update ptrs
-                ptr_start = ptr_end
-                t_training_end = time.time()
-                color_time_breakdown["record memory"] += t_training_end - t_record_memory_s
+            producer.stop()  # Stop the producer thread after this chunk's batches are processed
             # show chunk level stats
             
             if args.profile_stable:
@@ -1317,9 +1334,27 @@ for e in range(train_param['epoch']):
             print("\tsampling time: {:.2f}s, updating indptr time: {:.2f}s, updating stable flag time: {:.2f}s".format(batching_time_breakdown["sampling"], batching_time_breakdown["updating_indptr"], batching_time_breakdown["updating_stable_flag"]))
             print("***********************************************")
 
+        # PREFETCH: fold the producer thread's timings (accumulated across every
+        # chunk's .start()/.stop() cycle this epoch) back into the existing
+        # estimated_prep_times/time_prep/time_sample accounting -- otherwise
+        # initial_to_dgl_blocks/prepare_input read 0 below, since that work now runs
+        # on the producer thread instead of inline here. See the queue_put_wait_time
+        # vs queue_wait_time explanation in prefetch_pipeline.py for how to read these.
+        producer_stats = producer.get_stats()
+        estimated_prep_times["initial_to_dgl_blocks"] += producer_stats['to_dgl_blocks_time']
+        estimated_prep_times["prepare_input"] += producer_stats['prepare_input_time']
+        time_sample += producer_stats['sampling_time']
+        time_prep += producer_stats['sampling_time'] + producer_stats['to_dgl_blocks_time'] + producer_stats['prepare_input_time']
+        print("\t[prefetch] producer: sampling {:.2f}s, to_dgl_blocks {:.2f}s, prepare_input {:.2f}s, "
+              "queue_put_wait {:.2f}s, batches_produced {}".format(
+            producer_stats['sampling_time'], producer_stats['to_dgl_blocks_time'], producer_stats['prepare_input_time'],
+            producer_stats['queue_put_wait_time'], producer_stats['batches_produced']))
+        print("\t[prefetch] consumer: queue_wait {:.2f}s (~0 means producer kept up; >0 means producer is the "
+              "bottleneck and its cost is leaking into wall-clock time despite prefetching)".format(queue_wait_time))
+
         print("\testimated initial to_dgl_blocks time: {:.2f}s, prepare_input time: {:.2f}s, mailbox prep time: {:.2f}s, post to_dgl_blocks time: {:.2f}s, mailbox update time: {:.2f}s, update_memory_and_check_stablizing time: {:.2f}s, updating indptr and stable flag time: {:.2f}s, get_stable_flag time: {:.2f}s, edge_feat_index time: {:.2f}s".format(
-            estimated_prep_times["initial_to_dgl_blocks"], 
-            estimated_prep_times["prepare_input"], 
+            estimated_prep_times["initial_to_dgl_blocks"],
+            estimated_prep_times["prepare_input"],
             estimated_prep_times["mailbox_prep"], 
             estimated_prep_times["post_to_dgl_blocks"], 
             estimated_prep_times["mailbox_update"], 
