@@ -250,10 +250,10 @@ if 'all_on_gpu' in train_param and train_param['all_on_gpu']:
         mailbox.move_to_gpu()
     ALL_GPU = True
 
-if mailbox is not None:
-    print(f"[mailbox device check] node_memory={mailbox.node_memory.device} "
-          f"mailbox={mailbox.mailbox.device} mailbox_ts={mailbox.mailbox_ts.device} "
-          f"next_mail_pos={mailbox.next_mail_pos.device} self.device={mailbox.device}")
+#if mailbox is not None:
+#    print(f"[mailbox device check] node_memory={mailbox.node_memory.device} "
+#          f"mailbox={mailbox.mailbox.device} mailbox_ts={mailbox.mailbox_ts.device} "
+#          f"next_mail_pos={mailbox.next_mail_pos.device} self.device={mailbox.device}")
 
 print("check memory usage after creating model...")
 check_memory_usage()

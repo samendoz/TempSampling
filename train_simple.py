@@ -118,7 +118,7 @@ print("setting seed...")
 set_seed(0)
 
 # AGGRESSIVE PROFILING FLAG (WAIT FOR GPU OPERATIONS TO BE FINISHED)
-AGGRESSIVE_PROFILING = True
+AGGRESSIVE_PROFILING = False
 
 if args.profile_to_dgl_blocks:
     print("[INFO] Enabling fine-grained to_dgl_blocks profiling")
