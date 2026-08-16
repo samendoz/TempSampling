@@ -1523,6 +1523,31 @@ for e in range(train_param['epoch']):
             batch_latency.append(batch_time)
             other_latency.append(batch_time - model_latency[-1])
 
+        print("***********************************************")
+        if args.profile_to_dgl_blocks:
+            tmp_to_dgl_blocks_profile = get_to_dgl_blocks_profile_summary()
+            tmp_mailbox_prep_profile = get_mailbox_prep_profile_summary()
+            print_to_dgl_blocks_profile()
+            print("\tCaptured Training Loop to_dgl_blocks time: {:.2f}%".format(100 * tmp_to_dgl_blocks_profile['total_time'] /
+                                                                                prep_time_breakdown["to_dgl_blocks"] if prep_time_breakdown["to_dgl_blocks"] > 0 else 0))
+            print("\tCaptured Prepare Input time: {:.2f}%".format(100 * (tmp_to_dgl_blocks_profile['combine_first_time'] +
+                                                                         tmp_to_dgl_blocks_profile['node_index_time'] +
+                                                                         tmp_to_dgl_blocks_profile['edge_index_time'] +
+                                                                         tmp_to_dgl_blocks_profile['node_cuda_time'] +
+                                                                         tmp_to_dgl_blocks_profile['edge_cuda_time']
+                                                                         ) / prep_time_breakdown["prepare_input"] if prep_time_breakdown["prepare_input"] > 0 else 0))
+            print_mailbox_prep_profile()
+            print("\tCaptured Mailbox Prep time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile['mailbox_index_time'] +
+                                                                        tmp_mailbox_prep_profile['mailbox_cuda_time']) /
+                                                                    prep_time_breakdown["mailbox_prep"] if prep_time_breakdown["mailbox_prep"] > 0 else 0))
+
+            print("\tCaptured Mailbox Update time: {:.2f}%".format(100 * (tmp_mailbox_prep_profile["mailbox_up_index_time"] +
+                                                                          tmp_mailbox_prep_profile["mailbox_up_dedup_time"] +
+                                                                          tmp_mailbox_prep_profile["mailbox_up_write_time"]
+                                                                         ) / prep_time_breakdown["mailbox_update"] if prep_time_breakdown["mailbox_update"] > 0 else 0))
+
+        print("***********************************************")
+
     if args.mode == 'observing' or args.mode == 'observing_large':
         print("moving_node_usage_stats", moving_node_usage_stats)
         print("average max", np.mean(moving_node_usage_stats["max"][:-1]), "average min", np.mean(moving_node_usage_stats["min"][:-1]), "average mean", np.mean(moving_node_usage_stats["mean"][:-1]))
