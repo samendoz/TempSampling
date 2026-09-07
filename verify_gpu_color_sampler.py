@@ -71,10 +71,21 @@ def build_synthetic_graph(num_nodes, num_events, seed):
 
 
 def make_samplers(indptr, edge_index, indices, eid, num_nodes, num_events, num_colors, window_size):
-    cpu = ColorBatchSampler(indptr, edge_index, indices, eid, num_nodes, num_events,
+    # IMPORTANT: the constructor's "num_edges" argument must be len(eid) -- the
+    # flattened CSR array length -- not the number of actual temporal events.
+    # ColoringSampler's C++ constructor ignores the passed-in num_edges and
+    # recomputes this->num_edges = eid.size() internally (same pattern as
+    # num_nodes = indptr.size()-1); train_simple.py passes num_edges =
+    # len(g["eid"]) for exactly this reason. sample_batch()'s end_edge_id /
+    # minimal_batch_end_edge_id clamp against this value, so GPUColorBatchSampler
+    # (which -- unlike the CPU wrapper -- recomputes that clamp itself in Python)
+    # must be constructed with the same len(eid) value the CPU C++ object uses,
+    # or the two will silently clamp batch boundaries differently.
+    num_edges_csr = len(eid)
+    cpu = ColorBatchSampler(indptr, edge_index, indices, eid, num_nodes, num_edges_csr,
                              num_colors=num_colors, num_recent_edges=window_size,
                              num_hops=2, use_full_edge=False)
-    gpu = GPUColorBatchSampler(indptr, edge_index, indices, eid, num_nodes, num_events,
+    gpu = GPUColorBatchSampler(indptr, edge_index, indices, eid, num_nodes, num_edges_csr,
                                 num_colors=num_colors, num_recent_edges=window_size,
                                 num_hops=2, use_full_edge=False, device='cuda')
     cpu.color_graph(num_events)

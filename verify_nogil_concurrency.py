@@ -44,7 +44,9 @@ NUM_EVENTS = 3000
 
 def main():
     indptr, edge_index, indices, eid, num_events, train_df = build_synthetic_graph(NUM_NODES, NUM_EVENTS, seed=42)
-    sampler = ColorBatchSampler(indptr, edge_index, indices, eid, NUM_NODES, num_events,
+    # num_edges must be len(eid) (the flattened CSR length), not num_events -- see
+    # the comment in verify_gpu_color_sampler.py's make_samplers() for why.
+    sampler = ColorBatchSampler(indptr, edge_index, indices, eid, NUM_NODES, len(eid),
                                  num_colors=6, num_recent_edges=3, num_hops=2,
                                  use_full_edge=False, use_nogil=True)
     sampler.color_graph(num_events)
