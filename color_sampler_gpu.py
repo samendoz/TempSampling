@@ -311,9 +311,9 @@ class GPUColorBatchSampler():
         flat_pos_color = torch.searchsorted(self.usage_flat_keys, event_keys_2, side='right')
         local_color_ptr = flat_pos_color - usage_offsets_n
         local_color_ptr = torch.where(no_more_update, usage_len, local_color_ptr)
-        local_color_ptr = torch.clamp(local_color_ptr, max=usage_len)
+        local_color_ptr = torch.minimum(local_color_ptr, usage_len)
 
-        local_su_ptr = torch.clamp(local_su_ptr, max=su_len)
+        local_su_ptr = torch.minimum(local_su_ptr, su_len)
 
         self.current_node_self_update_ptrs[nodes] = local_su_ptr
         self.current_node_color_ptrs[nodes] = local_color_ptr
@@ -359,7 +359,10 @@ class GPUColorBatchSampler():
                 ptr = self.current_node_color_ptrs[unstable_nodes]
                 idx_in_node = ptr + int(num_colors) - 1
                 valid = (idx_in_node >= 0) & (idx_in_node < node_len)
-                clamped_idx = torch.clamp(idx_in_node, min=0, max=torch.clamp(node_len - 1, min=0))
+                # torch.clamp doesn't accept a scalar min together with a tensor max in
+                # one call -- split into two single-bound clamps instead.
+                clamped_idx = torch.clamp(idx_in_node, min=0)
+                clamped_idx = torch.clamp(clamped_idx, max=torch.clamp(node_len - 1, min=0))
                 flat_idx = self.usage_offsets[unstable_nodes] + clamped_idx
                 candidates = self.usage_flat[flat_idx].to(torch.int64)
                 candidates = torch.where(valid, candidates, torch.full_like(candidates, end_edge_id))
