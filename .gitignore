@@ -7,3 +7,14 @@ __pycache__/
 *.pkl
 *.so
 *.egg-info/
+*results*/
+config/
+download_repo.sh
+*.md
+.token
+fetch_results.sh
+*.pdf
+extract_batches.py
+get_gdelt_results.sh
+*.key
+recreate_csv_from_log.sh
