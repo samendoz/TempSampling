@@ -51,6 +51,12 @@ def main():
                                  use_full_edge=False, use_nogil=True)
     sampler.color_graph(num_events)
     sampler.set_node_stable_mode(True)
+    # ColorBatchSampler.__init__ allocates node_stable_flag at size num_nodes-1
+    # (a pre-existing off-by-one in the original code); reset() -- which the real
+    # training loop always calls once per epoch before the first sample_batch() --
+    # reallocates it at the full num_nodes. Do the same here, or indexing with the
+    # highest valid node id crashes on the very first sample_batch() call.
+    sampler.reset()
 
     errors = []
     stop = threading.Event()
