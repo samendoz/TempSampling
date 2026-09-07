@@ -29,7 +29,8 @@ class ColorBatchSampler():
                     decay_step = 5,
                     decay_factor = 5,
                     minimum_scale_factor=0.5,
-                    use_full_edge=False):
+                    use_full_edge=False,
+                    use_nogil=False):
         """
         Constructor of the class.
         :param indptr: indptr is the start index of the edges for each node.
@@ -48,6 +49,10 @@ class ColorBatchSampler():
         :param decay_type: decay_type is the type of decay to use for the number of colors.
         :param decay_step: decay_step is the step to decay the number of colors.
         :param decay_factor: decay_factor is the factor to decay the number of colors.
+        :param use_nogil: if True, call the GIL-releasing C++ bindings (sample_batch_nogil /
+            update_node_color_ptrs_nogil) so this sampler can run concurrently with a
+            producer/consumer prefetch pipeline on another thread. Default False preserves
+            the exact current (GIL-holding) behavior.
         """
         self.indptr = indptr
         self.edge_index = edge_index
@@ -76,8 +81,9 @@ class ColorBatchSampler():
         # print("eid: ", eid)
 
         self.use_full_edge = use_full_edge
-    
-        self.sampler = ColorSamplerCore.ColoringSampler(indptr, 
+        self.use_nogil = use_nogil
+
+        self.sampler = ColorSamplerCore.ColoringSampler(indptr,
                                                         edge_index, 
                                                         indices,  
                                                         eid,
@@ -292,7 +298,8 @@ class ColorBatchSampler():
         sample_batch() call before a slower consumer thread gets to it.
         """
         with self._state_lock:
-            self.sampler.update_node_color_ptrs(recent_event_id, related_nodes)
+            fn = self.sampler.update_node_color_ptrs_nogil if self.use_nogil else self.sampler.update_node_color_ptrs
+            fn(recent_event_id, related_nodes)
 
 
     def sample_batch(self, 
@@ -338,24 +345,26 @@ class ColorBatchSampler():
                 # print("\t\tunstable nodes: ", len(unstable_nodes), "root nodes: ", len(root_nodes))
                 num_colors = self.color_decay(batch_index)
                 # print("\tnum colors: ", num_colors, "remained_node_ratio: ", len(unstable_nodes) / len(root_nodes))
-                end_event_id = self.sampler.sample_batch(unstable_nodes,
-                                                        start_event_id,
-                                                        self.node_stable_flag,
-                                                        num_colors,
-                                                        minimal_batch_size,
-                                                        step_size,
-                                                        self.node_stable_mode)
+                sample_fn = self.sampler.sample_batch_nogil if self.use_nogil else self.sampler.sample_batch
+                end_event_id = sample_fn(unstable_nodes,
+                                        start_event_id,
+                                        self.node_stable_flag,
+                                        num_colors,
+                                        minimal_batch_size,
+                                        step_size,
+                                        self.node_stable_mode)
                 self.batch_index_list.append(end_event_id)
             else:
                 num_colors = self.color_decay(batch_index)
                 # print("num colors: ", num_colors, "self.num_colors: ", self.num_colors)
-                end_event_id = self.sampler.sample_batch(root_nodes,
-                                                         start_event_id,
-                                                         self.node_stable_flag,
-                                                         num_colors,
-                                                         minimal_batch_size,
-                                                         step_size,
-                                                         self.node_stable_mode)
+                sample_fn = self.sampler.sample_batch_nogil if self.use_nogil else self.sampler.sample_batch
+                end_event_id = sample_fn(root_nodes,
+                                         start_event_id,
+                                         self.node_stable_flag,
+                                         num_colors,
+                                         minimal_batch_size,
+                                         step_size,
+                                         self.node_stable_mode)
                 self.batch_index_list.append(end_event_id)
 
         # print("\tsample batch time: ", time.time() - ed_t_root_nodes, "get root nodes time: ", ed_t_root_nodes - st_t)
@@ -388,24 +397,26 @@ class MultiColorBatchSampler(ColorBatchSampler):
                     chunk_num=1,
                     cache_dir="sampler_caches",
                     enable_pickle=False,
-                    use_full_edge=False):
-        super(MultiColorBatchSampler, self).__init__(indptr, 
-                                                    edge_index, 
+                    use_full_edge=False,
+                    use_nogil=False):
+        super(MultiColorBatchSampler, self).__init__(indptr,
+                                                    edge_index,
                                                     indices,
-                                                    eid, 
-                                                    num_nodes, 
-                                                    num_edges, 
-                                                    num_colors, 
-                                                    num_hops=num_hops, 
-                                                    num_recent_edges=num_recent_edges, 
-                                                    num_workers=num_workers, 
+                                                    eid,
+                                                    num_nodes,
+                                                    num_edges,
+                                                    num_colors,
+                                                    num_hops=num_hops,
+                                                    num_recent_edges=num_recent_edges,
+                                                    num_workers=num_workers,
                                                     num_threads_per_worker=num_threads_per_worker,
                                                     num_nodes_per_thread=num_nodes_per_thread,
                                                     decay_type=decay_type,
                                                     decay_step=decay_step,
                                                     decay_factor=decay_factor,
                                                     minimum_scale_factor=minimum_scale_factor,
-                                                    use_full_edge=use_full_edge)
+                                                    use_full_edge=use_full_edge,
+                                                    use_nogil=use_nogil)
         self.sampler.enable_multi_color()
         # multi color map storage
         self.chunk_num = chunk_num

@@ -397,6 +397,7 @@ PYBIND11_MODULE(sampler_core, m)
                       int, int, int, std::vector<int> &, bool, bool,
                       int, TimeStampType>())
         .def("sample", &ParallelSampler::sample)
+        .def("sample_nogil", &ParallelSampler::sample, py::call_guard<py::gil_scoped_release>())
         .def("reset", &ParallelSampler::reset)
         .def("get_ret", [](const ParallelSampler &ps) { return ps.ret; });
 }

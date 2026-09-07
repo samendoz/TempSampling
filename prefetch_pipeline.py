@@ -5,7 +5,7 @@ from utils import to_dgl_blocks, node_to_dgl_blocks, prepare_input
 
 class PrefetchProducer:
     def __init__(self, sampler, sample_param, gnn_param, node_feats, edge_feats,
-                 combine_first=False, all_gpu=True, queue_size=2):
+                 combine_first=False, all_gpu=True, queue_size=2, use_nogil=False):
         self.sampler = sampler
         self.sample_param = sample_param
         self.gnn_param = gnn_param
@@ -13,6 +13,13 @@ class PrefetchProducer:
         self.edge_feats = edge_feats
         self.combine_first = combine_first
         self.all_gpu = all_gpu
+        # GIL-RELEASE VARIANT: when True, call the C++ sampler's GIL-releasing
+        # `sample_nogil` binding instead of `sample`, so this producer thread's
+        # neighbor-sampling call can actually run concurrently with the consumer
+        # thread's Python-level work (model forward/backward, mailbox updates)
+        # instead of holding the GIL for the whole call. Default False preserves
+        # the exact current (GIL-holding) behavior.
+        self._sample_fn_name = 'sample_nogil' if use_nogil else 'sample'
 
         self.queue = queue.Queue(maxsize=queue_size)
         self.thread = None
@@ -60,12 +67,13 @@ class PrefetchProducer:
 
             # 1. Graph Sampling
             if self.sampler is not None:
+                sample_fn = getattr(self.sampler, self._sample_fn_name)
                 t0 = perf_counter()
                 if 'no_neg' in self.sample_param and self.sample_param['no_neg']:
                     pos_root_end = root_nodes.shape[0] * 2 // 3
-                    self.sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
+                    sample_fn(root_nodes[:pos_root_end], ts[:pos_root_end])
                 else:
-                    self.sampler.sample(root_nodes, ts)
+                    sample_fn(root_nodes, ts)
                 ret = self.sampler.get_ret()
                 with self.stats_lock:
                     self.stats['sampling_time'] += perf_counter() - t0
