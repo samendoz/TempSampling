@@ -116,8 +116,16 @@ class GPUColorBatchSampler():
         if not self.use_full_edge:
             self.sampler.disable_full_edges()
 
-        self.prev_node_stable_flag = torch.zeros(num_nodes - 1, dtype=torch.bool, device=self.device)
-        self.node_stable_flag = torch.zeros(num_nodes - 1, dtype=torch.bool, device=self.device)
+        # ColoringSampler's constructor ignores the num_nodes arg above and
+        # recomputes it as indptr.size() - 1 (color_sampler_core.cpp); the
+        # caller passes indptr.shape[0] (one larger), so re-sync from the C++
+        # object here rather than trusting the constructor arg -- every CSR
+        # table this class builds (get_usage_table/get_update_table) is sized
+        # by the C++ side's num_nodes, not the inflated one passed in.
+        self.num_nodes = int(self.sampler.num_nodes)
+
+        self.prev_node_stable_flag = torch.zeros(self.num_nodes, dtype=torch.bool, device=self.device)
+        self.node_stable_flag = torch.zeros(self.num_nodes, dtype=torch.bool, device=self.device)
         self.use_memory = False
         self.node_stable_mode = False
         self.batch_index_list = []
@@ -134,8 +142,8 @@ class GPUColorBatchSampler():
         self.self_update_flat_keys = None
         self.max_eid = None
         self.large_const = None
-        self.current_node_color_ptrs = torch.zeros(num_nodes, dtype=torch.int64, device=self.device)
-        self.current_node_self_update_ptrs = torch.zeros(num_nodes, dtype=torch.int64, device=self.device)
+        self.current_node_color_ptrs = torch.zeros(self.num_nodes, dtype=torch.int64, device=self.device)
+        self.current_node_self_update_ptrs = torch.zeros(self.num_nodes, dtype=torch.int64, device=self.device)
 
         # Same rationale as ColorBatchSampler._state_lock: sample_batch() runs on
         # the prefetch producer thread, update_node_indptr_direct()/
