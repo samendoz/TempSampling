@@ -405,6 +405,19 @@ class MailBox():
                 device = self.node_memory.device
                 idx = b.srcdata['ID'].to(device).long()
 
+                # TEMP DIAGNOSTIC: turn the opaque CUDA device-side assert on
+                # out-of-range idx into an informative CPU-side exception.
+                if idx.numel() > 0:
+                    idx_min = int(idx.min().item())
+                    idx_max = int(idx.max().item())
+                    if idx_min < 0 or idx_max >= self.mailbox.shape[0]:
+                        raise RuntimeError(
+                            f"prep_input_mails: idx out of range for mailbox -- "
+                            f"idx min={idx_min} max={idx_max}, mailbox.shape[0]={self.mailbox.shape[0]}, "
+                            f"node_memory.shape[0]={self.node_memory.shape[0]}, "
+                            f"num_out_of_range={(int((idx < 0).sum()) + int((idx >= self.mailbox.shape[0]).sum()))}"
+                        )
+
                 b.srcdata['mem'] = self.node_memory[idx].cuda(non_blocking=True)
                 b.srcdata['mem_ts'] = self.node_memory_ts[idx].cuda(non_blocking=True)
                 b.srcdata['mem_input'] = self.mailbox[idx].reshape(b.srcdata['ID'].shape[0], -1).cuda(non_blocking=True)

@@ -344,6 +344,20 @@ class GPUColorBatchSampler():
         checked_df = train_df.loc[start_event_id:start_event_id + step_size]
         root_nodes = np.unique(np.concatenate([checked_df['src'].values, checked_df['dst'].values])).astype(np.int32)
 
+        # TEMP DIAGNOSTIC: turn an out-of-range node id into an informative
+        # CPU-side exception instead of a downstream CUDA device-side assert
+        # (self.usage_offsets/self_update_offsets are sized self.num_nodes+1,
+        # so any node id >= self.num_nodes reads off the end of those tensors).
+        if root_nodes.size > 0:
+            rn_min = int(root_nodes.min())
+            rn_max = int(root_nodes.max())
+            if rn_min < 0 or rn_max >= self.num_nodes:
+                raise RuntimeError(
+                    f"sample_batch: root_nodes out of range for color sampler -- "
+                    f"min={rn_min} max={rn_max}, self.num_nodes={self.num_nodes}, "
+                    f"start_event_id={start_event_id}, step_size={step_size}"
+                )
+
         end_edge_id = min(start_event_id + step_size, self.num_edges)
         minimal_batch_end_edge_id = min(start_event_id + minimal_batch_size, self.num_edges)
 
