@@ -374,24 +374,28 @@ class GPUColorBatchSampler():
 
             num_colors = self.color_decay(batch_index)
 
-            if unstable_nodes.numel() == 0:
+            if unstable_nodes.numel() == 0 or self.usage_flat.numel() == 0:
                 final_event = end_edge_id
             else:
                 node_len = self.usage_offsets[unstable_nodes + 1] - self.usage_offsets[unstable_nodes]
                 ptr = self.current_node_color_ptrs[unstable_nodes]
                 idx_in_node = ptr + int(num_colors) - 1
-                valid = (idx_in_node >= 0) & (idx_in_node < node_len)
-                # torch.clamp doesn't accept a scalar min together with a tensor max in
-                # one call -- split into two single-bound clamps instead.
+                
+                # A node can only have a candidate if it actually has edges (node_len > 0)
+                valid = (idx_in_node >= 0) & (idx_in_node < node_len) & (node_len > 0)
+                
+                # Clamp safely within the node's bounds
                 clamped_idx = torch.clamp(idx_in_node, min=0)
                 clamped_idx = torch.clamp(clamped_idx, max=torch.clamp(node_len - 1, min=0))
+                
                 flat_idx = self.usage_offsets[unstable_nodes] + clamped_idx
+                
+                # Strictly clamp flat_idx to avoid indexing past the end of usage_flat
+                flat_idx = torch.clamp(flat_idx, 0, self.usage_flat.numel() - 1)
+                
                 candidates = self.usage_flat[flat_idx].to(torch.int64)
                 candidates = torch.where(valid, candidates, torch.full_like(candidates, end_edge_id))
                 final_event = end_edge_id if candidates.numel() == 0 else min(end_edge_id, int(candidates.min().item()))
-
-            final_event = max(final_event, minimal_batch_end_edge_id)
-            self.batch_index_list.append(final_event)
 
         return final_event, root_nodes
 
