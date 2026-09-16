@@ -383,6 +383,12 @@ class GPUColorBatchSampler():
                 candidates = torch.where(valid, candidates, torch.full_like(candidates, end_edge_id))
                 final_event = end_edge_id if candidates.numel() == 0 else min(end_edge_id, int(candidates.min().item()))
 
+            # Mirror the C++ reference (color_sampler_core.cpp's sample_batch):
+            # never let a batch stall/go backwards -- always advance by at
+            # least minimal_batch_size edges, even if the color-sampler logic
+            # picked an earlier cutoff.
+            final_event = max(final_event, minimal_batch_end_edge_id)
+
         return final_event, root_nodes
 
 
