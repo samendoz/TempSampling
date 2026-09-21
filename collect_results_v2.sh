@@ -10,18 +10,22 @@
 #   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario nogil
 #   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario gpu
 #   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario nogil_gpu
+#   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario block
+#   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario block_nogil_gpu
 #   bash collect_results_v2.sh --extra_config config/adapt_exp/test_01.yml --scenario all
 #
 # Scenarios:
-#   baseline   python train_simple.py    <extra_config>                                    (control, untouched)
-#   v2         python train_simple_v2.py <extra_config>                                    (regression check: no flags, should match baseline)
-#   nogil      python train_simple_v2.py <extra_config> --use_nogil_sampling
-#   gpu        python train_simple_v2.py <extra_config> --use_gpu_color_sampler
-#   nogil_gpu  python train_simple_v2.py <extra_config> --use_nogil_sampling --use_gpu_color_sampler
-#   all        runs all five in sequence, then prints a comparison summary
+#   baseline         python train_simple.py    <extra_config>                                                                (control, untouched)
+#   v2               python train_simple_v2.py <extra_config>                                                                (regression check: no flags, should match baseline)
+#   nogil            python train_simple_v2.py <extra_config> --use_nogil_sampling
+#   gpu              python train_simple_v2.py <extra_config> --use_gpu_color_sampler
+#   nogil_gpu        python train_simple_v2.py <extra_config> --use_nogil_sampling --use_gpu_color_sampler
+#   block            python train_simple_v2.py <extra_config> --use_block_sampling
+#   block_nogil_gpu  python train_simple_v2.py <extra_config> --use_block_sampling --use_nogil_sampling --use_gpu_color_sampler  (block sampling stacked with everything else; orthogonal knobs)
+#   all              runs all seven in sequence, then prints a comparison summary
 #
-# Any extra CLI args (e.g. --color_num_workers 4, --profile_to_dgl_blocks) are
-# passed through to every scenario run.
+# Any extra CLI args (e.g. --color_num_workers 4, --block_size 8,
+# --profile_to_dgl_blocks) are passed through to every scenario run.
 #
 # Output (per scenario):
 #   results/<STEM>_<scenario>.log   — full stdout/stderr
@@ -61,12 +65,12 @@ done
 
 if [ -z "$EXTRA_CONFIG" ]; then
     echo "ERROR: --extra_config is required."
-    echo "Usage: bash collect_results_v2.sh --extra_config <yaml> --scenario {baseline|v2|nogil|gpu|nogil_gpu|all} [extra args]"
+    echo "Usage: bash collect_results_v2.sh --extra_config <yaml> --scenario {baseline|v2|nogil|gpu|nogil_gpu|block|block_nogil_gpu|all} [extra args]"
     exit 1
 fi
 if [ -z "$SCENARIO" ]; then
     echo "ERROR: --scenario is required."
-    echo "Usage: bash collect_results_v2.sh --extra_config <yaml> --scenario {baseline|v2|nogil|gpu|nogil_gpu|all} [extra args]"
+    echo "Usage: bash collect_results_v2.sh --extra_config <yaml> --scenario {baseline|v2|nogil|gpu|nogil_gpu|block|block_nogil_gpu|all} [extra args]"
     exit 1
 fi
 
@@ -81,34 +85,38 @@ RUN_TAG="${DATA}_${MODEL}_${EXP}_$(date +%Y%m%d_%H%M%S)"
 # ---------------------------------------------------------------------------
 scenario_script() {
     case "$1" in
-        baseline)  echo "train_simple.py" ;;
-        v2)        echo "train_simple_v2.py" ;;
-        nogil)     echo "train_simple_v2.py" ;;
-        gpu)       echo "train_simple_v2.py" ;;
-        nogil_gpu) echo "train_simple_v2.py" ;;
+        baseline)         echo "train_simple.py" ;;
+        v2)               echo "train_simple_v2.py" ;;
+        nogil)            echo "train_simple_v2.py" ;;
+        gpu)               echo "train_simple_v2.py" ;;
+        nogil_gpu)        echo "train_simple_v2.py" ;;
+        block)            echo "train_simple_v2.py" ;;
+        block_nogil_gpu)  echo "train_simple_v2.py" ;;
         *) echo "" ;;
     esac
 }
 
 scenario_flags() {
     case "$1" in
-        baseline)  echo "" ;;
-        v2)        echo "" ;;
-        nogil)     echo "--use_nogil_sampling" ;;
-        gpu)       echo "--use_gpu_color_sampler" ;;
-        nogil_gpu) echo "--use_nogil_sampling --use_gpu_color_sampler" ;;
+        baseline)         echo "" ;;
+        v2)               echo "" ;;
+        nogil)            echo "--use_nogil_sampling" ;;
+        gpu)              echo "--use_gpu_color_sampler" ;;
+        nogil_gpu)        echo "--use_nogil_sampling --use_gpu_color_sampler" ;;
+        block)            echo "--use_block_sampling" ;;
+        block_nogil_gpu)  echo "--use_block_sampling --use_nogil_sampling --use_gpu_color_sampler" ;;
         *) echo "" ;;
     esac
 }
 
-ALL_SCENARIOS=(baseline v2 nogil gpu nogil_gpu)
+ALL_SCENARIOS=(baseline v2 nogil gpu nogil_gpu block block_nogil_gpu)
 
 if [ "$SCENARIO" == "all" ]; then
     SCENARIOS_TO_RUN=("${ALL_SCENARIOS[@]}")
 else
     SCRIPT_CHECK="$(scenario_script "$SCENARIO")"
     if [ -z "$SCRIPT_CHECK" ]; then
-        echo "ERROR: unknown scenario '$SCENARIO'. Valid: baseline v2 nogil gpu nogil_gpu all"
+        echo "ERROR: unknown scenario '$SCENARIO'. Valid: baseline v2 nogil gpu nogil_gpu block block_nogil_gpu all"
         exit 1
     fi
     SCENARIOS_TO_RUN=("$SCENARIO")
