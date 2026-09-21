@@ -3,18 +3,22 @@ import os, sys, math, yaml
 from time import perf_counter
 from prefetch_pipeline import PrefetchProducer, patch_mfg_mailbox
 from color_sampler_gpu import GPUColorBatchSampler, GPUMultiColorBatchSampler
+from block_sampling import BlockPrefetchProducer
 
-# train_simple_v2.py: same training loops as train_simple.py, plus two independent,
-# default-False flags (see --use_nogil_sampling / --use_gpu_color_sampler below) so
-# GIL-release and the GPU color sampler can each be tested in isolation or together
-# without changing train_simple.py's behavior at all. Running this file with neither
-# flag set should behave identically to train_simple.py.
+# train_simple_v2.py: same training loops as train_simple.py, plus independent,
+# default-False flags (see --use_nogil_sampling / --use_gpu_color_sampler /
+# --use_block_sampling below) so GIL-release, the GPU color sampler, and
+# block-level superset sampling can each be tested in isolation or together
+# without changing train_simple.py's behavior at all. Running this file with no
+# flags set should behave identically to train_simple.py.
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--use_nogil_sampling', action='store_true', help='release the GIL in the neighbor sampler and color sampler C++ calls (sample_nogil / sample_batch_nogil / update_node_color_ptrs_nogil) so the prefetch producer thread can run concurrently with the consumer thread')
 parser.add_argument('--use_gpu_color_sampler', action='store_true', help='use GPUColorBatchSampler/GPUMultiColorBatchSampler (vectorized GPU tensor ops) instead of the CPU/OpenMP ColorBatchSampler/MultiColorBatchSampler for the per-batch sample_batch()/update_node_indptr_direct() calls; only supports freeze_any: true (node_stable_mode=True)')
 parser.add_argument('--color_num_workers', type=int, default=8, help='color sampler OpenMP workers (only matters for the CPU ColorBatchSampler/MultiColorBatchSampler path, and for GPU path color_graph()). With --use_nogil_sampling, this pool can now run concurrently with the neighbor sampler pool (--num_thread in the base config) instead of being serialized by the GIL -- lower this if the two pools oversubscribe the target machine\'s cores.')
 parser.add_argument('--color_num_threads_per_worker', type=int, default=8, help='see --color_num_workers; total color-sampler OMP threads = color_num_workers * color_num_threads_per_worker')
+parser.add_argument('--use_block_sampling', action='store_true', help='use BlockPrefetchProducer instead of PrefetchProducer: groups --block_size consecutive iterations, samples the union of their root nodes in one ParallelSampler.sample_union() call, and slices each iteration\'s own sub-batch back out -- amortizing the neighbor sampler / DGL-block-construction cost across the block. Only supports layer==1, history==1 (TGN/APAN configs). Orthogonal to --use_nogil_sampling (sample_union_nogil is used automatically when both are set) and to --use_gpu_color_sampler (this only changes the neighbor sampler / DGL-block path, not the color sampler).')
+parser.add_argument('--block_size', type=int, default=4, help='see --use_block_sampling; number of consecutive iterations unioned into one sample_union() call')
 parser.add_argument('--data', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
 parser.add_argument('--gpu', type=str, default='0', help='which GPU to use')
@@ -729,17 +733,31 @@ for e in range(train_param['epoch']):
                 cur_batch += 1
 
         # B. Instantiate & Start the Background Producer Thread
-        producer = PrefetchProducer(
-            sampler=sampler,
-            sample_param=sample_param,
-            gnn_param=gnn_param,
-            node_feats=node_feats,
-            edge_feats=edge_feats,
-            combine_first=combine_first,
-            all_gpu=ALL_GPU,
-            queue_size=2,
-            use_nogil=args.use_nogil_sampling
-        )
+        if args.use_block_sampling:
+            producer = BlockPrefetchProducer(
+                sampler=sampler,
+                sample_param=sample_param,
+                gnn_param=gnn_param,
+                node_feats=node_feats,
+                edge_feats=edge_feats,
+                combine_first=combine_first,
+                all_gpu=ALL_GPU,
+                queue_size=2,
+                use_nogil=args.use_nogil_sampling,
+                block_size=args.block_size
+            )
+        else:
+            producer = PrefetchProducer(
+                sampler=sampler,
+                sample_param=sample_param,
+                gnn_param=gnn_param,
+                node_feats=node_feats,
+                edge_feats=edge_feats,
+                combine_first=combine_first,
+                all_gpu=ALL_GPU,
+                queue_size=2,
+                use_nogil=args.use_nogil_sampling
+            )
 
         producer.start(batch_generator_fn())
 
@@ -1081,17 +1099,31 @@ for e in range(train_param['epoch']):
         # after the chunk loop below reflects the whole epoch, same convention as
         # batch_stable_freezing). Each chunk gets its own generator/thread via
         # producer.start(batch_generator_fn()) once that chunk's coloring is done.
-        producer = PrefetchProducer(
-            sampler=sampler,
-            sample_param=sample_param,
-            gnn_param=gnn_param,
-            node_feats=node_feats,
-            edge_feats=edge_feats,
-            combine_first=combine_first,
-            all_gpu=ALL_GPU,
-            queue_size=2,
-            use_nogil=args.use_nogil_sampling
-        )
+        if args.use_block_sampling:
+            producer = BlockPrefetchProducer(
+                sampler=sampler,
+                sample_param=sample_param,
+                gnn_param=gnn_param,
+                node_feats=node_feats,
+                edge_feats=edge_feats,
+                combine_first=combine_first,
+                all_gpu=ALL_GPU,
+                queue_size=2,
+                use_nogil=args.use_nogil_sampling,
+                block_size=args.block_size
+            )
+        else:
+            producer = PrefetchProducer(
+                sampler=sampler,
+                sample_param=sample_param,
+                gnn_param=gnn_param,
+                node_feats=node_feats,
+                edge_feats=edge_feats,
+                combine_first=combine_first,
+                all_gpu=ALL_GPU,
+                queue_size=2,
+                use_nogil=args.use_nogil_sampling
+            )
 
         print("chunk size", chunk_size, "chunk num", chunk_num)
 
