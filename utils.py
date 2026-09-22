@@ -10,6 +10,12 @@ from time import perf_counter
 
 
 TO_DGL_BLOCKS_PROFILE = False
+# No default here previously -- AGGRESSIVE_PROFILING only ever got created by
+# set_to_dgl_blocks_profiling(), which only runs when --profile_to_dgl_blocks
+# is passed (default False). to_dgl_blocks()/prepare_input() reference this
+# global unconditionally on every call, so without --profile_to_dgl_blocks the
+# name never existed and every call raised NameError.
+AGGRESSIVE_PROFILING = False
 TO_DGL_BLOCKS_PROFILE_SUMMARY = {
     'count': 0,
     'create_block_time': 0.0,

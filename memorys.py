@@ -19,6 +19,12 @@ node_sim_trace_list = list()
 cos_sim = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 
 MAILBOX_PREP_PROFILE_SUMMARY_PROFILE = False
+# Same fix as utils.py's AGGRESSIVE_PROFILING: no default here previously --
+# only ever created by set_mailbox_prep_profile(), which only runs when
+# --profile_to_dgl_blocks is passed. prep_input_mails()/
+# update_memory_and_check_stablizing()/update_mailbox() reference this global
+# unconditionally, so without that flag every call raised NameError.
+AGGRESSIVE_PROFILING = False
 MAILBOX_PREP_PROFILE_SUMMARY = {
     'mailbox_index_time': 0.0,
     'mailbox_cuda_time': 0.0,
