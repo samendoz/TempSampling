@@ -1,0 +1,16 @@
+data: REDDIT
+data_root: DATA                 # relative to the TempSampling repo root
+batch_size: [900, 8000]         # 900 = TGL batch_size in config/eval/TGN_lr_mod*.yml, 8000 = Cascade max_batch_size
+
+# GCoD reordering (see gcod_reorder.py)
+degree_split: null              # explicit degree thresholds, e.g. [3, 6]; overrides degree_quantiles
+degree_quantiles: [0.5, 0.8]    # thresholds taken at these quantiles of the nonzero degree distribution
+total_subgraphs: 12             # GCoD default; must be divisible by num_groups
+num_groups: 2
+balance_edges: true
+
+baselines: [identity, random]   # same block sizes, without GCoD placement
+seed: 0
+output_dir: results/REDDIT          # relative to TGNNReordering/
+save_per_batch: true
+chunk_events: 20000000          # events per vectorized chunk; lower if memory is tight
