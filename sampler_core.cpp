@@ -61,6 +61,15 @@ class ParallelSampler
         std::vector<std::vector<std::vector<EdgeIDType>::size_type>> ts_ptr;
         omp_lock_t *ts_ptr_lock;
         std::vector<TemporalGraphBlock> ret;
+        // When true, every query finds its time window by binary search on the
+        // node's (time-sorted) neighbor list instead of the monotone ts_ptr
+        // cursors. The cursors assume root timestamps never go backwards between
+        // calls; with out-of-time-order training (event reordering experiment)
+        // they stay ahead and silently starve nodes of neighbors. Same neighbors
+        // as the cursor path whenever queries are time-ordered.
+        bool force_search = false;
+
+        void set_force_search(bool v) { force_search = v; }
 
         ParallelSampler(std::vector<EdgeIDType> &_indptr, std::vector<EdgeIDType> &_indices,
                         std::vector<EdgeIDType> &_eid, std::vector<TimeStampType> &_ts,
@@ -351,6 +360,8 @@ class ParallelSampler
                 }
                 else
                     use_ptr = false;
+                if (force_search)
+                    use_ptr = false;
                 if (i==0)
                     sample_layer(root_nodes, root_ts, num_neighbors[i], use_ptr, true);
                 else
@@ -398,5 +409,6 @@ PYBIND11_MODULE(sampler_core, m)
                       int, TimeStampType>())
         .def("sample", &ParallelSampler::sample)
         .def("reset", &ParallelSampler::reset)
+        .def("set_force_search", &ParallelSampler::set_force_search)
         .def("get_ret", [](const ParallelSampler &ps) { return ps.ret; });
 }
