@@ -62,7 +62,17 @@ parser.add_argument('--profile_to_dgl_blocks', action='store_true', help='whethe
 parser.add_argument('--adaptive_update', action='store_true', help='whether to use adaptive update based on node similarity')
 parser.add_argument('--extra_config', type=str, default='', help='path to extra config parameters for the trainer/batching, e.g., --extra_config "config/adapt_exp/WIKI/TGN.yml"')
 
+# temporal-violation experiment (see event_reorder.py, TGNNReordering/make_event_order.py)
+parser.add_argument('--event_order', type=str, default='', help='npz from TGNNReordering/make_event_order.py: train on the training events in this order instead of time order (val/test stay time-ordered)')
+parser.add_argument('--neighbor_search', action='store_true', help='neighbor sampler finds time windows by binary search instead of monotone cursors (required for correct neighbors when training out of time order)')
+parser.add_argument('--violation_metrics', action='store_true', help='log per-batch temporal-violation counts')
+parser.add_argument('--exp_csv', type=str, default='', help='write per-epoch metrics (and per-batch violation npz) for this run to this CSV path')
+parser.add_argument('--run_tag', type=str, default='', help='free-form run label stored in --exp_csv')
+parser.add_argument('--final_test', action='store_true', help='after training, reload the best model, replay train/val in time order and report test AP/AUC')
+
 args=parser.parse_args()
+# options given explicitly on the command line win over --extra_config
+_cli_keys = {a[2:].split('=')[0] for a in sys.argv[1:] if a.startswith('--')}
 
 
 # TRAIN_SIMPLE: use yaml config file to override parameters
@@ -73,6 +83,9 @@ if args.extra_config != '':
     with open(args.extra_config, 'r') as f:
         extra_config = yaml.safe_load(f)
     for key, value in extra_config.items():
+        if key in _cli_keys:
+            print(f"[INFO] '{key}' given on the command line, ignoring YAML value {value}")
+            continue
         if not hasattr(args, key):
             print(f"[INFO] Adding new attribute from YAML: '{key}' = {value}")
         setattr(args, key, value)
@@ -100,6 +113,8 @@ from memorys import *
 from color_sampler import *
 from adaptive_updater import *
 from prefetch_sampler import PrefetchManager
+from event_reorder import (load_event_order, sequence_df, position_of_row, color_graph_arrays,
+                           ViolationTracker, ExperimentLog)
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 import nvtx
@@ -226,6 +241,26 @@ if args.use_inductive:
     inductive_inds = get_inductive_links(df, train_edge_end, val_edge_end)
     df = df.iloc[inductive_inds]
 
+#########################################
+# temporal-violation experiment: processing order of the training events
+#   df      time order, used for evaluation (always)
+#   df_seq  processing order, used by the training loops (= df unless --event_order)
+#########################################
+event_order_meta = {}
+if args.event_order:
+    if args.mode not in ('batch_stable_freezing', 'batch_stable_freezing_large'):
+        raise ValueError('--event_order is only implemented for batch_stable_freezing(_large), got mode ' + args.mode)
+    if args.use_inductive or args.use_full_edge:
+        raise ValueError('--event_order does not support --use_inductive / --use_full_edge')
+    event_perm, event_order_meta = load_event_order(args.event_order, train_edge_end)
+    df_seq = sequence_df(df, event_perm, train_edge_end)
+    pos_of_row = position_of_row(event_perm, len(df))
+    print("[event_order] training on", args.event_order, event_order_meta.get('tag', ''),
+          "disorder:", event_order_meta.get('disorder', {}))
+else:
+    df_seq = df
+    pos_of_row = np.arange(len(df), dtype=np.int64)
+
 
 print("creating model...")
 gnn_dim_node = 0 if node_feats is None else node_feats.shape[1]
@@ -259,6 +294,9 @@ if not ('no_sample' in sample_param and sample_param['no_sample']):
                               sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                               sample_param['strategy']=='recent', sample_param['prop_time'],
                               sample_param['history'], float(sample_param['duration']))
+    if args.neighbor_search:
+        print("[neighbor_search] neighbor sampler uses per-query binary search (no ts_ptr cursors)")
+        sampler.set_force_search(True)
 print("sampler is None?", sampler is None)
 print("g['indptr'].shape", g['indptr'].shape, "g['indices'].shape", g['indices'].shape, "g['eid'].shape", g['eid'].shape, "g['ts'].shape", g['ts'].shape)
 print("training index", train_edge_end, "validation index", val_edge_end, "total index", df.shape[0])
@@ -292,8 +330,12 @@ if args.mode == "observing" or args.mode == "batch_stable_freezing" or args.mode
         edge_index = np.stack([src_nodes,src_nodes], axis=0).T
         indices = g["indices"]
         eid = g["eid"]
+        if args.event_order:
+            # color sampler: event ids = processing positions, per-node lists sorted by position
+            indptr, indices, eid = color_graph_arrays(g, pos_of_row)
+            print("[event_order] color sampler uses the processing-order graph")
         num_nodes = g["indptr"].shape[0]
-        num_edges = len(g["eid"]) 
+        num_edges = len(g["eid"])
     # for debugging
     # print("indptr", indptr)
     # my_node_count = indptr[1:] - indptr[:-1]
@@ -486,11 +528,33 @@ print("group_indexes", group_indexes[0])
 ############################################
 # get training index
 ############################################
-training_df = df[:train_edge_end]
+training_df = df_seq[:train_edge_end]
 src_index = np.array(training_df.src.values.tolist()).astype(np.int32)
 dst_index = np.array(training_df.dst.values.tolist()).astype(np.int32)
 train_edge_index = np.stack((src_index, dst_index))
 
+#########################################
+# temporal-violation experiment: per-batch tracker and per-epoch CSV
+#########################################
+violation_tracker = ViolationTracker(pos_of_row, mailbox) if args.violation_metrics else None
+exp_log = None
+if args.exp_csv:
+    exp_log = ExperimentLog(args.exp_csv, {
+        'run_tag': args.run_tag,
+        'data': args.data,
+        'config': args.config,
+        'mode': args.mode,
+        'event_order': event_order_meta.get('tag', 'time') if args.event_order else 'time',
+        'neighbor_search': bool(args.neighbor_search),
+    })
+
+def record_violations(ptr_start, ptr_end, rows, ret):
+    """Tracker call; returns its own runtime so callers can drop it from batch timings."""
+    if violation_tracker is None:
+        return 0.0
+    _t = time.time()
+    violation_tracker.record(ptr_start, ptr_end, rows, ret if sampler is not None else None)
+    return time.time() - _t
 
 
 total_train_time = 0
@@ -595,7 +659,7 @@ for e in range(train_param['epoch']):
     ########################################
     # batching sampler purpose: check if we can use memorized results
     ########################################
-    training_df = df[:train_edge_end]
+    training_df = df_seq[:train_edge_end]
     if e != 0 and color_sampler is not None and args.mode != 'batch_stable_freezing_large' and args.mode != 'observing_large':
         if mailbox is not None:
             recent_node_stable = mailbox.get_full_node_stable_flag()
@@ -629,6 +693,8 @@ for e in range(train_param['epoch']):
     if mailbox is not None:
         mailbox.reset()
         model.memory_updater.last_updated_nid = None
+    if violation_tracker is not None:
+        violation_tracker.start_epoch()
 
 
     group_idx = group_indexes[random.randint(0, len(group_indexes) - 1)]
@@ -643,7 +709,7 @@ for e in range(train_param['epoch']):
         final_group_idx = np.zeros(train_edge_end)
 
 
-        training_df = df[:train_edge_end]
+        training_df = df_seq[:train_edge_end]
         cur_batch = 0
         cur_batch_count = 0
         cur_color_dict = dict()
@@ -689,7 +755,7 @@ for e in range(train_param['epoch']):
             t_training_start = time.time()
             
             # update batch count
-            rows = df.iloc[ptr_start:ptr_end]
+            rows = df_seq.iloc[ptr_start:ptr_end]
             final_group_idx[ptr_start:ptr_end] = batch_count
             batch_count += 1
             total_batch_count += 1
@@ -758,6 +824,9 @@ for e in range(train_param['epoch']):
                     ret = sampler.get_ret()
                 time_sample += time.time() - t_tot_s
 
+            # violation metrics read memory state BEFORE this batch updates it;
+            # shift the batch start so the tracker's time is excluded from batch timings
+            t_tot_s += record_violations(ptr_start, ptr_end, rows, ret if sampler is not None else None)
 
             t_prep_s = time.time()
 
@@ -1103,7 +1172,7 @@ for e in range(train_param['epoch']):
         chunk_num = (train_edge_end + chunk_size - 1) // chunk_size
         batch_count = 0
         final_group_idx = np.zeros(train_edge_end)
-        training_df = df[:train_edge_end]
+        training_df = df_seq[:train_edge_end]
         cur_batch = 0
 
         print("chunk size", chunk_size, "chunk num", chunk_num)
@@ -1183,7 +1252,7 @@ for e in range(train_param['epoch']):
                 t_training_start = time.time()
                 
                 # update batch count
-                rows = df.iloc[ptr_start:ptr_end]
+                rows = df_seq.iloc[ptr_start:ptr_end]
                 final_group_idx[ptr_start:ptr_end] = batch_count
                 batch_count += 1
                 total_batch_count += 1
@@ -1222,6 +1291,8 @@ for e in range(train_param['epoch']):
                     ret = sampler.get_ret()
                     # time_sample += ret[0].sample_time()
                     time_sample += time.time() - t_tot_s
+                # violation metrics (before memory update); tracker time excluded from batch timings
+                t_tot_s += record_violations(ptr_start, ptr_end, rows, ret if sampler is not None else None)
                 t_prep_s = time.time()
                 # if e == 15:
                 #     to_dgl_blocks_ob(ret, sample_param['history'])
@@ -1558,6 +1629,23 @@ for e in range(train_param['epoch']):
     ))
     print('\t Evaluation time:{:.2f}s'.format(eval_time))
 
+    # temporal-violation experiment: epoch summary
+    vio = violation_tracker.end_epoch(e) if violation_tracker is not None else {}
+    if vio:
+        print('\tviolations: batches:{} avg_batch:{:.1f} time_inversion:{:.4f} mem_future:{:.4f} '
+              'nbr known/inbatch/unprocessed:{:.4f}/{:.4f}/{:.4f} nbr_per_root:{:.2f}'.format(
+                  vio['num_batches'], vio['avg_batch_size'], vio['time_inversion_rate'], vio['mem_future_rate'],
+                  vio['nbr_known_rate'], vio['nbr_inbatch_rate'], vio['nbr_unprocessed_rate'], vio['nbr_per_root']))
+    if exp_log is not None:
+        exp_log.write({
+            'epoch': e, 'train_loss': total_loss, 'val_ap': ap, 'val_auc': auc, 'val_loss': val_losses[-1],
+            'time_tot': time_tot, 'time_sample': time_sample, 'time_prep': time_prep, 'time_model': time_model,
+            'eval_time': eval_time,
+            'num_batches': len(batch_sizes) if batch_sizes else vio.get('num_batches', ''),
+            'avg_batch_size': float(np.mean(batch_sizes)) if batch_sizes else vio.get('avg_batch_size', ''),
+            **{k: v for k, v in vio.items() if k not in ('num_batches', 'avg_batch_size')},
+        })
+
     if flip_ratio_log:
         flip_arr = np.array(flip_ratio_log)
         print('\tstable flag flip ratio — mean:{:.4f}  std:{:.4f}  min:{:.4f}  max:{:.4f}  batches:{:d}'.format(flip_arr.mean(), flip_arr.std(), flip_arr.min(), flip_arr.max(), len(flip_arr)))
@@ -1716,3 +1804,35 @@ else:
     print('\tTotal training time:{:.2f}s, average batch size:{:.2f}'.format(total_train_time, total_batch_sum / total_batch_count))
 print('\tBest epoch:{:d}  Best AP:{:4f}  Best AUC:{:4f}'.format(best_e, best_ap, best_auc), 
       "ave val loss {:.4f}, min val loss {:.4f}".format(sum(val_losses) / len(val_losses), min(val_losses)))
+#########################################
+# temporal-violation experiment: final test.
+# Same protocol for every run, whatever order training used: reload the best
+# model (by val AP), reset memory, replay train and val in TIME order to rebuild
+# the memory, then evaluate test.
+#########################################
+if args.final_test:
+    if os.path.exists(path_saver) and best_ap > 0:
+        print('Loading model at epoch {}...'.format(best_e))
+        model.load_state_dict(torch.load(path_saver))
+    else:
+        print('[final_test] no checkpoint saved (best model is only kept after epoch 2); testing the last epoch model')
+        best_e = train_param['epoch'] - 1
+    model.eval()
+    if sampler is not None:
+        sampler.reset()
+    if mailbox is not None:
+        mailbox.reset()
+        model.memory_updater.last_updated_nid = None
+        eval('train')
+        eval('val')
+    test_ap, test_auc = eval('test')
+    if args.eval_neg_samples > 1:
+        print('\ttest AP:{:4f}  test MRR:{:4f}'.format(test_ap, test_auc))
+    else:
+        print('\ttest AP:{:4f}  test AUC:{:4f}'.format(test_ap, test_auc))
+    if exp_log is not None:
+        exp_log.write({'epoch': 'test', 'best_epoch': best_e, 'val_ap': best_ap, 'val_auc': best_auc,
+                       'test_ap': test_ap, 'test_auc': test_auc, 'total_train_time': total_train_time})
+
+if violation_tracker is not None and args.exp_csv:
+    violation_tracker.save(os.path.splitext(args.exp_csv)[0] + '_batches.npz')
