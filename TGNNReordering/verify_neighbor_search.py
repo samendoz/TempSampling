@@ -33,13 +33,19 @@ NEIGHS = 10
 
 
 def ground_truth(g, roots, ts):
-    indptr, gts, geid = g['indptr'], g['ts'], g['eid']
+    # float32 throughout, like the sampler (train_simple.py passes ts.astype(np.float32)).
+    # In float64, datasets with fractional timestamps (REDDIT) disagree with the
+    # sampler on events that float32 rounds to the same time.
+    indptr, geid = g['indptr'], g['eid']
+    gts = g['ts'].astype(np.float32)
+    eps = np.float32(1e-7)
     out = []
     for n, t in zip(roots, ts):
+        t = np.float32(t)
         s, end = int(indptr[n]), int(indptr[n + 1])
         e = s + int(np.searchsorted(gts[s:end], t, side='right')) - 1
         e = max(e, s)
-        ks = [k for k in range(e, max(s, e - NEIGHS), -1) if k < end and gts[k] < t - 1e-7]
+        ks = [k for k in range(e, max(s, e - NEIGHS), -1) if k < end and gts[k] < t - eps]
         out.append(sorted(int(geid[k]) for k in ks))
     return out
 
